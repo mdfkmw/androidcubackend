@@ -67,6 +67,7 @@ fun MainTabsScreen(
     var autoSelected by remember { mutableStateOf(false) }
     var autoSelectedTouched by remember { mutableStateOf(false) }
     var currentTripId by rememberSaveable { mutableStateOf<Int?>(null) }
+    var currentRouteScheduleId by rememberSaveable { mutableStateOf<Int?>(null) }
 
 
 
@@ -258,11 +259,12 @@ fun MainTabsScreen(
                     loggedIn = loggedIn,
                     tripStarted = tripStarted,
                     selectedVehicleId = selectedVehicleId,
-                    onRouteSelected = { routeId, routeName, hour, tripId, direction ->
+                    onRouteSelected = { routeId, routeName, hour, tripId, direction, routeScheduleId ->
                         currentRouteId = routeId
                         currentDirection = direction
                         currentRouteInfo = "Traseu: $routeName, Cursa: $hour"
                         currentTripId = tripId          // salvăm trip-ul curent
+                        currentRouteScheduleId = routeScheduleId
                         tripStarted = true              // cursa PORNITĂ
                         boardingStarted = false         // resetăm îmbarcarea
                     },
@@ -270,6 +272,7 @@ fun MainTabsScreen(
                         tripStarted = false
                         boardingStarted = false
                         currentTripId = null            // nu mai avem cursă activă
+                        currentRouteScheduleId = null
                         currentRouteId = null
                         currentDirection = null
                         currentRouteInfo = "Nicio cursă selectată încă"
@@ -328,7 +331,7 @@ fun AdminTabScreen(
     loggedIn: Boolean,
     tripStarted: Boolean,
     selectedVehicleId: Int?,
-    onRouteSelected: (Int, String, String, Int?, String?) -> Unit,
+    onRouteSelected: (Int, String, String, Int?, String?, Int?) -> Unit,
     onEndTrip: () -> Unit,
     onOpenSync: () -> Unit,
     onOpenLogin: () -> Unit
@@ -346,9 +349,12 @@ fun AdminTabScreen(
     val remoteRepo = remember { RemoteRepository() }
 
     var routes by remember { mutableStateOf<List<Route>>(emptyList()) }
-     var tripIdByRouteAndDisplayTime by remember {
-         mutableStateOf<Map<Pair<Int, String>, Int>>(emptyMap())
-     }
+    var tripIdByRouteAndDisplayTime by remember {
+        mutableStateOf<Map<Pair<Int, String>, Int>>(emptyMap())
+    }
+    var routeScheduleIdByRouteAndDisplayTime by remember {
+        mutableStateOf<Map<Pair<Int, String>, Int?>>(emptyMap())
+    }
     var directionByRouteAndDisplayTime by remember {
         mutableStateOf<Map<Pair<Int, String>, String>>(emptyMap())
     }
@@ -372,16 +378,19 @@ fun AdminTabScreen(
              }
 
              // mapăm (route_id, display_time) -> trip_id
-             val map = mutableMapOf<Pair<Int, String>, Int>()
+             val tripMap = mutableMapOf<Pair<Int, String>, Int>()
+             val routeScheduleMap = mutableMapOf<Pair<Int, String>, Int?>()
              val directionMap = mutableMapOf<Pair<Int, String>, String>()
              mobileRoutes.forEach { mr ->
                  mr.trips.forEach { trip ->
                      val key = mr.route_id to trip.display_time
-                     map[key] = trip.trip_id
+                     tripMap[key] = trip.trip_id
+                     routeScheduleMap[key] = trip.route_schedule_id
                      directionMap[key] = trip.direction
                  }
              }
-             tripIdByRouteAndDisplayTime = map
+             tripIdByRouteAndDisplayTime = tripMap
+             routeScheduleIdByRouteAndDisplayTime = routeScheduleMap
              directionByRouteAndDisplayTime = directionMap
          } else {
              // 2. fallback – ce aveai deja (DB sau dummy)
@@ -417,6 +426,7 @@ fun AdminTabScreen(
 
             // în fallback nu avem trips reale
             tripIdByRouteAndDisplayTime = emptyMap()
+            routeScheduleIdByRouteAndDisplayTime = emptyMap()
             directionByRouteAndDisplayTime = emptyMap()
          }
      }
@@ -577,6 +587,7 @@ fun AdminTabScreen(
                     onHourClick = { hour ->
                         val key = route.id to hour
                         val tripId = tripIdByRouteAndDisplayTime[key]
+                        val routeScheduleId = routeScheduleIdByRouteAndDisplayTime[key]
                         val direction = directionByRouteAndDisplayTime[key]
 
                         if (!loggedIn) {
@@ -620,16 +631,11 @@ fun AdminTabScreen(
                                 )
                             }
 
-                            // totul OK → putem porni cursa în MainTabsScreen
-                            onRouteSelected(route.id, route.name, hour, tripId, direction)
-                            screen = "buttons"
-
-
-                            // totul OK → putem porni cursa în MainTabsScreen
-                            onRouteSelected(route.id, route.name, hour, tripId, direction)
-                            screen = "buttons"
-                        }
-                    },
+                              // totul OK → putem porni cursa în MainTabsScreen
+                              onRouteSelected(route.id, route.name, hour, tripId, direction, routeScheduleId)
+                              screen = "buttons"
+                          }
+                      },
                     onCancel = { screen = "buttons" }
                 )
             }
@@ -908,20 +914,22 @@ fun OperatiiTabScreen(
         }
 
         selectedDestination != null -> {
-            BiletDetaliiScreen(
-                destination = selectedDestination!!,
-                onBack = { selectedDestination = null },
-                onIncasare = {
-                    selectedDestination = null
-                    showDestinations = false
-                },
-                currentStopName = currentStopName,
-                ticketPrice = selectedDestinationPrice,
+                    BiletDetaliiScreen(
+                        destination = selectedDestination!!,
+                        onBack = { selectedDestination = null },
+                        onIncasare = {
+                            selectedDestination = null
+                            showDestinations = false
+                        },
+                        currentStopName = currentStopName,
+                        ticketPrice = selectedDestinationPrice,
+                        repo = repo,
+                        routeScheduleId = currentRouteScheduleId,
 
-                // date reale pentru bilet – folosim parametrii funcției, nu variabile din altă parte
-                tripId = tripId,
-                fromStationId = fromStationId,
-                toStationId = toStationId,
+                        // date reale pentru bilet – folosim parametrii funcției, nu variabile din altă parte
+                        tripId = tripId,
+                        fromStationId = fromStationId,
+                        toStationId = toStationId,
                 priceListId = priceListId,
                 tripVehicleId = tripVehicleId,
                 operatorId = DriverLocalStore.getOperatorId(),
