@@ -908,20 +908,21 @@ fun OperatiiTabScreen(
         }
 
         selectedDestination != null -> {
-            BiletDetaliiScreen(
-                destination = selectedDestination!!,
-                onBack = { selectedDestination = null },
-                onIncasare = {
-                    selectedDestination = null
-                    showDestinations = false
-                },
-                currentStopName = currentStopName,
-                ticketPrice = selectedDestinationPrice,
+                BiletDetaliiScreen(
+                    destination = selectedDestination!!,
+                    onBack = { selectedDestination = null },
+                    onIncasare = {
+                        selectedDestination = null
+                        showDestinations = false
+                    },
+                    currentStopName = currentStopName,
+                    ticketPrice = selectedDestinationPrice,
+                    repo = repo,
 
-                // date reale pentru bilet – folosim parametrii funcției, nu variabile din altă parte
-                tripId = tripId,
-                fromStationId = fromStationId,
-                toStationId = toStationId,
+                    // date reale pentru bilet – folosim parametrii funcției, nu variabile din altă parte
+                    tripId = tripId,
+                    fromStationId = fromStationId,
+                    toStationId = toStationId,
                 priceListId = priceListId,
                 tripVehicleId = tripVehicleId,
                 operatorId = DriverLocalStore.getOperatorId(),
