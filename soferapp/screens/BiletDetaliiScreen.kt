@@ -11,7 +11,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
-import ro.priscom.sofer.ui.data.local.LocalRepository
 import ro.priscom.sofer.ui.data.local.TicketLocalRepository
 import ro.priscom.sofer.ui.screens.DiscountOption
 
@@ -33,8 +32,6 @@ fun BiletDetaliiScreen(
     onIncasare: () -> Unit,
     currentStopName: String? = null,
     ticketPrice: Double? = null,
-    repo: LocalRepository,
-    routeScheduleId: Int? = null,
 
     // 🔵 date reale pentru bilet – deocamdată doar le primim, le vom folosi la PARTEA 5
     tripId: Int? = null,
@@ -53,24 +50,6 @@ fun BiletDetaliiScreen(
     val context = LocalContext.current
     val ticketRepo = remember { TicketLocalRepository(context) }
     val coroutineScope = rememberCoroutineScope()
-    var discountOptions by remember { mutableStateOf<List<DiscountOption>>(emptyList()) }
-
-    LaunchedEffect(routeScheduleId) {
-        val filtered = repo.getDiscountsForRouteSchedule(routeScheduleId)
-
-        val options = filtered.map {
-            DiscountOption(
-                id = it.id,
-                label = it.label,
-                type = it.type,
-                valueOff = it.valueOff
-            )
-        }
-
-        discountOptions = listOf(
-            DiscountOption(id = null, label = "FĂRĂ REDUCERE", valueOff = 0.0)
-        ) + options
-    }
 
     // dacă avem preț din listele reale, îl folosim; altfel 0 intern
     var pretBrut by remember(ticketPrice) { mutableStateOf(ticketPrice ?: 0.0) }
@@ -81,22 +60,22 @@ fun BiletDetaliiScreen(
     var selectedPaymentMethod by remember { mutableStateOf("cash") } // deocamdată doar cash
 
     // reducerea și totalul au sens doar dacă avem preț
-    val basePrice = if (ticketPrice != null) pretBrut * quantity * (if (dusIntors) 2 else 1) else 0.0
-    val discountAmount = if (ticketPrice != null) {
-        when (selectedDiscount?.type) {
-            "percent" -> basePrice * (selectedDiscount?.valueOff ?: 0.0) / 100.0
-            "fixed" -> selectedDiscount?.valueOff ?: 0.0
-            else -> 0.0
-        }
-    } else 0.0
-    val finalPrice = (basePrice - discountAmount).coerceAtLeast(0.0)
+    val discountFactor = if (ticketPrice != null) {
+        1 - (selectedDiscount?.percent ?: 0.0) / 100.0
+    } else {
+        0.0
+    }
+    val finalPrice = if (ticketPrice != null) {
+        pretBrut * quantity * (if (dusIntors) 2 else 1) * discountFactor
+    } else {
+        0.0
+    }
     val canIncasare = ticketPrice != null
 
     // ecranul de reduceri
     if (showReduceri) {
         ReduceriScreen(
             onBack = { showReduceri = false },
-            options = discountOptions,
             onSelect = { opt ->
                 selectedDiscount = opt
                 showReduceri = false

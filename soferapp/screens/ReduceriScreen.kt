@@ -17,23 +17,49 @@ import androidx.compose.ui.unit.sp
  * Opțiune de reducere:
  *  - id  = discount_types.id din backend (sau null pentru "fără reducere")
  *  - label = cum o vede șoferul
- *  - type = "percent" sau "fixed", conform discount_types.type
- *  - valueOff = valoarea reducerii (procent sau sumă fixă)
+ *  - percent = procent reducere (ex: 50.0 înseamnă -50%)
  */
 data class DiscountOption(
     val id: Int?,
     val label: String,
-    val type: String = "percent", // "percent" sau "fixed"
-    val valueOff: Double
+    val percent: Double
 )
 
 @Composable
 fun ReduceriScreen(
     onBack: () -> Unit,
-    options: List<DiscountOption>,
     onSelect: (DiscountOption?) -> Unit
 ) {
     val activeGreen = androidx.compose.ui.graphics.Color(0xFF5BC21E)
+
+    // lista de reduceri – o legăm mai târziu 1:1 de discount_types din backend
+    val options = listOf(
+        DiscountOption(
+            id = null,
+            label = "FĂRĂ REDUCERE",
+            percent = 0.0
+        ),
+        DiscountOption(
+            id = 1,
+            label = "Pensionar 50%",
+            percent = 50.0
+        ),
+        DiscountOption(
+            id = 2,
+            label = "DAS 50%",
+            percent = 50.0
+        ),
+        DiscountOption(
+            id = 3,
+            label = "Copil <10 ani 50%",
+            percent = 50.0
+        ),
+        DiscountOption(
+            id = 4,
+            label = "Copil <12 ani 50%",
+            percent = 50.0
+        )
+    )
 
     Column(
         modifier = Modifier
@@ -74,7 +100,7 @@ fun ReduceriScreen(
                     .clickable {
                         // dacă alegem "Fără reducere" trimitem null,
                         // altfel trimitem opțiunea selectată
-                        if (opt.id == null && opt.valueOff == 0.0) {
+                        if (opt.id == null && opt.percent == 0.0) {
                             onSelect(null)
                         } else {
                             onSelect(opt)
@@ -87,12 +113,11 @@ fun ReduceriScreen(
                         .padding(12.dp)
                 ) {
                     Text(text = opt.label, fontSize = 16.sp)
-                    val badge = when (opt.type) {
-                        "fixed" -> "-${"%.0f".format(opt.valueOff)} lei"
-                        else -> "-${opt.valueOff.toInt()}%"
-                    }
-                    if (opt.valueOff != 0.0) {
-                        Text(text = badge, fontSize = 14.sp)
+                    if (opt.percent != 0.0) {
+                        Text(
+                            text = "-${opt.percent.toInt()}%",
+                            fontSize = 14.sp
+                        )
                     }
                 }
             }
