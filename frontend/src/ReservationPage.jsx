@@ -4436,9 +4436,9 @@ const handleSeatTextColorChange = (value) => {
               Se încarcă harta locurilor...
             </div>
           ) : seats.length > 0 && (
-            <div className="bg-white rounded shadow p-4 flex gap-6 items-start w-fit mx-auto relative">
+            <div className="bg-white rounded shadow p-4 flex flex-col lg:flex-row gap-6 items-start w-full max-w-[1300px] mx-auto relative">
               {/* Harta locurilor */}
-              <div>
+              <div className="flex-1 min-w-0 w-full">
                 <div className="flex flex-wrap items-center gap-3 mb-3">
 
                   <div className="inline-flex items-center gap-2 flex-wrap">
@@ -4537,7 +4537,7 @@ const handleSeatTextColorChange = (value) => {
                   </div>
                 )}
                 {seats.length > 0 && seatViewMode === 'grid' && (
-                  <div className="relative inline-block w-full">
+                  <div className="relative inline-block w-full max-w-full">
                     {isWideView && showWideSeatControls && (
                       <div className="absolute -top-2 left-1/2 -translate-x-1/2 z-20 bg-white border border-gray-200 shadow-lg rounded-lg px-4 py-3 flex flex-col gap-3 w-64 text-xs">
                         <div className="text-[11px] font-semibold text-gray-700 uppercase tracking-wide text-center">
@@ -4702,7 +4702,7 @@ const handleSeatTextColorChange = (value) => {
               </div>
 
               {/* Formulare pasageri */}
-              <div className="space-y-4 max-w-md w-[450px]">
+              <div className="space-y-4 w-full lg:max-w-md lg:w-[450px]">
                 <div className="flex justify-between items-center">
                   <div className="font-semibold">Completează datele pasagerilor:</div>
                   <div className="flex items-center gap-2">
