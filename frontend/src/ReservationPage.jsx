@@ -5323,26 +5323,6 @@ const handleSeatTextColorChange = (value) => {
         )}
 
       </div>
-
-      {multiPassengerOptions && (
-        <MultiPassengerPopup
-          x={multiPassengerOptions.x}
-          y={multiPassengerOptions.y}
-          seat={multiPassengerOptions.seat}
-          selectedRoute={selectedRoute}
-          onSelect={(passenger) => {
-            setPopupPassenger({
-              ...selectedPassenger,
-              route_id: selectedRoute?.id,  // <-- adaugi route_id direct aici!
-            });
-            setPopupSeat(multiPassengerOptions.seat);
-            setPopupPosition({ x: multiPassengerOptions.x, y: multiPassengerOptions.y });
-            setMultiPassengerOptions(null);
-          }}
-          onClose={() => setMultiPassengerOptions(null)}
-        />
-      )}
-
       {popupPassenger && popupPosition && (
         <PassengerPopup
           // poziționare popup
