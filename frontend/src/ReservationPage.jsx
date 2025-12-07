@@ -5323,28 +5323,9 @@ const handleSeatTextColorChange = (value) => {
 
       </div>
 
-      {multiPassengerOptions && (
-        <MultiPassengerPopup
-          x={multiPassengerOptions.x}
-          y={multiPassengerOptions.y}
-          seat={multiPassengerOptions.seat}
-          selectedRoute={selectedRoute}
-          onSelect={(passenger) => {
-            setPopupPassenger({
-              ...selectedPassenger,
-              route_id: selectedRoute?.id,  // <-- adaugi route_id direct aici!
-            });
-            setPopupSeat(multiPassengerOptions.seat);
-            setPopupPosition({ x: multiPassengerOptions.x, y: multiPassengerOptions.y });
-            setMultiPassengerOptions(null);
-          }}
-          onClose={() => setMultiPassengerOptions(null)}
-        />
-      )}
-
-      {popupPassenger && popupPosition && (
-        <PassengerPopup
-          // poziționare popup
+        {popupPassenger && popupPosition && (
+          <PassengerPopup
+            // poziționare popup
           x={popupPosition.x}
           y={popupPosition.y}
 
@@ -5436,7 +5417,7 @@ const handleSeatTextColorChange = (value) => {
           onSelect={(passenger) => {
             setPopupPassenger({
               ...passenger,
-              route_id: selectedRoute?.id  // ASTA ERA CHEIA!
+              route_id: selectedRoute?.id, // ASTA ERA CHEIA!
             });
             setPopupSeat(multiPassengerOptions.seat);
             setPopupPosition({
