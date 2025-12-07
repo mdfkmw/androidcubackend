@@ -4436,12 +4436,13 @@ const handleSeatTextColorChange = (value) => {
               Se încarcă harta locurilor...
             </div>
           ) : seats.length > 0 && (
-            <div className="bg-white rounded shadow p-4 flex gap-6 items-start w-fit mx-auto relative">
-              {/* Harta locurilor */}
-              <div>
-                <div className="flex flex-wrap items-center gap-3 mb-3">
+            <div className="bg-white rounded shadow p-4 w-full max-w-full mx-auto">
+              <div className="flex flex-col lg:flex-row gap-6 items-start relative">
+                {/* Harta locurilor */}
+                <div className="w-full lg:w-auto overflow-x-auto">
+                  <div className="flex flex-wrap items-center gap-3 mb-3">
 
-                  <div className="inline-flex items-center gap-2 flex-wrap">
+                    <div className="inline-flex items-center gap-2 flex-wrap">
                     <button
                       type="button"
                       onClick={() => {
@@ -4531,13 +4532,13 @@ const handleSeatTextColorChange = (value) => {
                     </button>
                   </div>
                 </div>
-                {vehicleInfo && (
-                  <div className="text-sm text-gray-700 mb-2 font-semibold text-center">
-                    Vehicul: {vehicleInfo.name} ({vehicleInfo.plate})
-                  </div>
-                )}
-                {seats.length > 0 && seatViewMode === 'grid' && (
-                  <div className="relative inline-block w-full">
+                  {vehicleInfo && (
+                    <div className="text-sm text-gray-700 mb-2 font-semibold text-center">
+                      Vehicul: {vehicleInfo.name} ({vehicleInfo.plate})
+                    </div>
+                  )}
+                  {seats.length > 0 && seatViewMode === 'grid' && (
+                    <div className="relative inline-block w-full min-w-[320px] max-w-full">
                     {isWideView && showWideSeatControls && (
                       <div className="absolute -top-2 left-1/2 -translate-x-1/2 z-20 bg-white border border-gray-200 shadow-lg rounded-lg px-4 py-3 flex flex-col gap-3 w-64 text-xs">
                         <div className="text-[11px] font-semibold text-gray-700 uppercase tracking-wide text-center">
@@ -4609,7 +4610,7 @@ const handleSeatTextColorChange = (value) => {
                       </div>
                     )}
 
-                    <div className={`overflow-auto ${isWideView ? (showWideSeatControls ? 'pt-20' : 'pt-12') : ''}`}>
+                    <div className={`overflow-auto max-w-full ${isWideView ? (showWideSeatControls ? 'pt-20' : 'pt-12') : ''}`}>
                       <SeatMap
                         ref={seatMapRef}
                         seats={seats}
@@ -4694,15 +4695,15 @@ const handleSeatTextColorChange = (value) => {
 
 
                     </div>
-                  </div>
-                )}
+                    </div>
+                  )}
 
 
 
-              </div>
+                </div>
 
-              {/* Formulare pasageri */}
-              <div className="space-y-4 max-w-md w-[450px]">
+                {/* Formulare pasageri */}
+                <div className="space-y-4 w-full lg:max-w-md lg:w-[450px]">
                 <div className="flex justify-between items-center">
                   <div className="font-semibold">Completează datele pasagerilor:</div>
                   <div className="flex items-center gap-2">
@@ -5322,26 +5323,6 @@ const handleSeatTextColorChange = (value) => {
         )}
 
       </div>
-
-      {multiPassengerOptions && (
-        <MultiPassengerPopup
-          x={multiPassengerOptions.x}
-          y={multiPassengerOptions.y}
-          seat={multiPassengerOptions.seat}
-          selectedRoute={selectedRoute}
-          onSelect={(passenger) => {
-            setPopupPassenger({
-              ...selectedPassenger,
-              route_id: selectedRoute?.id,  // <-- adaugi route_id direct aici!
-            });
-            setPopupSeat(multiPassengerOptions.seat);
-            setPopupPosition({ x: multiPassengerOptions.x, y: multiPassengerOptions.y });
-            setMultiPassengerOptions(null);
-          }}
-          onClose={() => setMultiPassengerOptions(null)}
-        />
-      )}
-
       {popupPassenger && popupPosition && (
         <PassengerPopup
           // poziționare popup
