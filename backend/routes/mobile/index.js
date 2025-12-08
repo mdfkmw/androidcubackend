@@ -16,6 +16,7 @@ router.use('/', require('./DriverReservationsApp'));
 router.use('/', require('./ValidateTripStartApp'));
 router.use('/', require('./DiscountTypesApp')); 
 router.use('/', require('./RouteDiscountsApp'));
+router.use('/route_schedules', require('./RouteSchedulesApp'));
 router.use('/', require('./driverApp'));
 
 module.exports = router;

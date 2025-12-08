@@ -8,6 +8,73 @@ const db = require('../../db');
 // Pentru autentificare – ca în driverApp.js / TicketsApp.js
 const { requireAuth } = require('../../middleware/auth');
 
+const { randomUUID } = require('crypto');
+
+
+
+
+// helper simplu: scrie în audit_logs, la fel ca în reservations.js
+async function logEvent(reservationId, action, actorId, details = null) {
+  try {
+    const correlation_id = details?.correlation_id || randomUUID();
+    const channel = details?.channel || 'agent'; // șoferul e tratat ca 'agent'
+    const amount = details?.amount || null;
+    const payment_method = details?.method || null;
+    const transaction_id = details?.transaction_id || null;
+    const related_id = details?.from_reservation_id || details?.related_reservation_id || null;
+    const note = details?.note || null;
+
+    const serialize = (payload) => {
+      if (!payload) return null;
+      if (typeof payload === 'string') return payload;
+      try {
+        return JSON.stringify(payload);
+      } catch {
+        return null;
+      }
+    };
+
+    const before_json = serialize(details?.before);
+    const after_json = serialize(details?.after);
+
+    let entity = 'reservation';
+    let finalAction = action && action.startsWith('reservation.') ? action : `reservation.${action}`;
+
+    // pentru plăți (deocamdată nu-l folosim aici)
+    if (action === 'pay' || action === 'payment.capture') {
+      entity = 'payment';
+      finalAction = 'payment.capture';
+    }
+
+    await db.query(
+      `
+      INSERT INTO audit_logs
+        (created_at, actor_id, entity, entity_id, action, related_entity, related_id,
+         correlation_id, channel, amount, payment_method, transaction_id, note, before_json, after_json)
+      VALUES (NOW(), ?, ?, ?, ?, 'reservation', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        actorId || null,
+        entity,
+        reservationId || null,
+        finalAction,
+        related_id || null,
+        correlation_id,
+        channel,
+        amount,
+        payment_method,
+        transaction_id,
+        note,
+        before_json,
+        after_json,
+      ]
+    );
+  } catch (e) {
+    console.warn('[audit] failed', e.message);
+  }
+}
+
+
 // Lista rezervărilor pentru un anumit trip, pentru aplicația de șofer
 // GET /api/mobile/trips/:tripId/reservations
 router.get('/trips/:tripId/reservations', requireAuth, async (req, res) => {
@@ -36,30 +103,34 @@ router.get('/trips/:tripId/reservations', requireAuth, async (req, res) => {
         e.name AS agent_name,
 
         -- preț de bază (din reservation_pricing)
-        rp.base_price,
-        -- suma reducerilor pentru rezervare
+        -- preț NET (final) salvat în reservation_pricing
+        rp.net_price AS final_price,
+
+        -- suma reducerilor pentru rezervare (din reservation_discounts)
         disc.discount_amount,
-        -- preț final după reduceri
+
+        -- preț de bază (reconstruit: net + reduceri)
         CASE
-          WHEN rp.base_price IS NULL THEN NULL
-          ELSE rp.base_price - COALESCE(disc.discount_amount, 0)
-        END AS final_price,
+          WHEN rp.net_price IS NULL THEN NULL
+          ELSE rp.net_price + COALESCE(disc.discount_amount, 0)
+        END AS base_price,
+
         -- cât s-a plătit efectiv (SUM(payments.amount, status='paid'))
         pay.paid_amount,
+
         -- cât mai este de plătit
         CASE
-          WHEN rp.base_price IS NULL THEN NULL
+          WHEN rp.net_price IS NULL THEN NULL
           ELSE GREATEST(
-            (rp.base_price - COALESCE(disc.discount_amount, 0))
-            - COALESCE(pay.paid_amount, 0),
+            rp.net_price - COALESCE(pay.paid_amount, 0),
             0
           )
         END AS due_amount,
+
         -- câmp numeric intern, îl convertim la boolean în JS
         CASE
-          WHEN rp.base_price IS NULL THEN 0
-          WHEN (rp.base_price - COALESCE(disc.discount_amount, 0))
-               <= COALESCE(pay.paid_amount, 0)
+          WHEN rp.net_price IS NULL THEN 0
+          WHEN rp.net_price <= COALESCE(pay.paid_amount, 0)
             THEN 1
           ELSE 0
         END AS is_paid_raw,
@@ -75,11 +146,11 @@ router.get('/trips/:tripId/reservations', requireAuth, async (req, res) => {
       LEFT JOIN employees e
         ON e.id = r.created_by
 
-      -- prețul din reservation_pricing
+      -- prețul NET (final) din reservation_pricing
       LEFT JOIN (
         SELECT
           reservation_id,
-          MAX(price_value) AS base_price
+          MAX(price_value) AS net_price
         FROM reservation_pricing
         GROUP BY reservation_id
       ) rp
@@ -165,6 +236,222 @@ router.get('/trips/:tripId/reservations', requireAuth, async (req, res) => {
     return res.status(500).json({ ok: false, error: 'internal_error' });
   }
 });
+
+
+// -----------------------------------------------------------------------------------
+// POST /api/mobile/reservations/:id/update-pricing
+// Schimbă prețul + reducerea + (opțional) destinația unei rezervări.
+//  - aplicația de șofer trimite base_price și final_price (calcul local, offline).
+//  - backend-ul:
+//      * actualizează reservation_pricing.price_value = base_price
+//      * șterge reducerile vechi și inserează reducerea nouă (dacă e cazul)
+//      * (opțional) actualizează exit_station_id
+//      * calculează cât e plătit și cât mai e de plătit
+//      * scrie în audit_logs before/after
+// -----------------------------------------------------------------------------------
+router.post('/reservations/:id/update-pricing', requireAuth, async (req, res) => {
+  const reservationId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(reservationId)) {
+    return res.status(400).json({ ok: false, error: 'invalid_reservation_id' });
+  }
+
+  const actorId = Number(req.user?.id) || null;
+
+  // body așteptat de la Android:
+  // {
+  //   base_price: 100.0,
+  //   final_price: 80.0,
+  //   discount_type_id: 2 | null,
+  //   exit_station_id: 123 | null
+  // }
+  const {
+    base_price,
+    final_price,
+    discount_type_id,
+    exit_station_id,
+  } = req.body || {};
+
+  const basePrice = Number(base_price);
+  const finalPrice = Number(final_price);
+
+  if (!Number.isFinite(basePrice) || !Number.isFinite(finalPrice) || basePrice < 0 || finalPrice < 0) {
+    return res.status(400).json({ ok: false, error: 'invalid_price_values' });
+  }
+
+  const discountTypeId =
+    discount_type_id === null || discount_type_id === undefined
+      ? null
+      : Number(discount_type_id);
+
+  if (discountTypeId !== null && !Number.isInteger(discountTypeId)) {
+    return res.status(400).json({ ok: false, error: 'invalid_discount_type_id' });
+  }
+
+  const newExitStationId =
+    exit_station_id === null || exit_station_id === undefined
+      ? null
+      : Number(exit_station_id);
+
+  try {
+    // 1️⃣ Luăm din DB situația curentă (pentru validare + before_json)
+    const { rows } = await db.query(
+      `
+      SELECT
+        r.id,
+        r.status,
+        r.boarded,
+        r.board_station_id,
+        r.exit_station_id AS cur_exit_station_id,
+        rp.price_value    AS cur_price_value,
+        rp.price_list_id,
+        rp.pricing_category_id,
+        COALESCE(disc.discount_amount, 0) AS cur_discount_amount
+      FROM reservations r
+      LEFT JOIN reservation_pricing rp
+        ON rp.reservation_id = r.id
+      LEFT JOIN (
+        SELECT reservation_id, SUM(discount_amount) AS discount_amount
+        FROM reservation_discounts
+        GROUP BY reservation_id
+      ) disc
+        ON disc.reservation_id = r.id
+      WHERE r.id = ?
+      LIMIT 1
+      `,
+      [reservationId]
+    );
+
+    const current = rows && rows[0];
+
+    if (!current) {
+      return res.status(404).json({ ok: false, error: 'reservation_not_found' });
+    }
+
+    if (current.boarded) {
+      return res.status(400).json({ ok: false, error: 'reservation_already_boarded' });
+    }
+
+    if (current.status === 'cancelled') {
+      return res.status(400).json({ ok: false, error: 'reservation_cancelled' });
+    }
+
+    if (!current.price_list_id) {
+      // fără info de pricing nu știm ce să actualizăm
+      return res.status(400).json({ ok: false, error: 'missing_pricing_row' });
+    }
+
+    // discount = baza - final (nu mergem sub 0)
+    const discountAmountRaw = basePrice - finalPrice;
+    const discountAmount =
+      discountAmountRaw > 0 ? Number(discountAmountRaw.toFixed(2)) : 0;
+
+    const snapshotPercent =
+      basePrice > 0 && discountAmount > 0
+        ? Number(((discountAmount / basePrice) * 100).toFixed(2))
+        : 0;
+
+    // 2️⃣ (opțional) actualizăm destinația
+    let effectiveExitStationId = current.cur_exit_station_id;
+    if (newExitStationId && newExitStationId !== current.cur_exit_station_id) {
+      const updExit = await db.query(
+        `
+        UPDATE reservations
+        SET exit_station_id = ?, version = version + 1
+        WHERE id = ?
+        `,
+        [newExitStationId, reservationId]
+      );
+      if (updExit.rowCount === 0) {
+        return res.status(404).json({ ok: false, error: 'reservation_not_found' });
+      }
+      effectiveExitStationId = newExitStationId;
+    }
+
+    // 3️⃣ ștergem reducerile vechi
+    await db.query(
+      `DELETE FROM reservation_discounts WHERE reservation_id = ?`,
+      [reservationId]
+    );
+
+    // 4️⃣ adăugăm reducerea nouă (dacă există și are sens)
+    if (discountTypeId !== null && discountAmount > 0) {
+      await db.query(
+        `
+        INSERT INTO reservation_discounts
+          (reservation_id, discount_type_id, discount_amount, discount_snapshot)
+        VALUES (?, ?, ?, ?)
+        `,
+        [reservationId, discountTypeId, discountAmount, snapshotPercent]
+      );
+    }
+
+    // 5️⃣ actualizăm prețul de bază în reservation_pricing
+    await db.query(
+      `
+      UPDATE reservation_pricing
+      SET price_value = ?, updated_at = NOW()
+      WHERE reservation_id = ?
+      `,
+      [basePrice, reservationId]
+    );
+
+    // 6️⃣ cât e deja plătit?
+    const payRes = await db.query(
+      `
+      SELECT
+        COALESCE(SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END), 0) AS paid_amount
+      FROM payments
+      WHERE reservation_id = ?
+      `,
+      [reservationId]
+    );
+    const paidAmount = Number(payRes.rows?.[0]?.paid_amount || 0);
+    const dueAmount = Math.max(0, Number(finalPrice.toFixed(2)) - paidAmount);
+
+    // 7️⃣ audit: before/after în audit_logs
+    const beforeSnapshot = {
+      exit_station_id: current.cur_exit_station_id,
+      base_price: current.cur_price_value != null ? Number(current.cur_price_value) : null,
+      discount_amount: Number(current.cur_discount_amount || 0),
+      paid_amount: paidAmount, // îl includem ca referință
+    };
+
+    const afterSnapshot = {
+      exit_station_id: effectiveExitStationId,
+      base_price: basePrice,
+      discount_amount: discountAmount,
+      final_price: Number(finalPrice.toFixed(2)),
+      paid_amount: paidAmount,
+      due_amount: dueAmount,
+      discount_type_id: discountTypeId,
+    };
+
+    await logEvent(reservationId, 'update', actorId, {
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      note: 'update pricing from driver_app',
+      channel: 'agent',
+    });
+
+    // 8️⃣ răspuns pentru aplicația de șofer
+    return res.json({
+      ok: true,
+      reservation_id: reservationId,
+      base_price: basePrice,
+      final_price: Number(finalPrice.toFixed(2)),
+      discount_amount: discountAmount,
+      paid_amount: paidAmount,
+      due_amount: dueAmount,
+      exit_station_id: effectiveExitStationId,
+    });
+  } catch (err) {
+    console.error('[mobile] error updating reservation pricing', err);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+
+
 
 // -----------------------------------------------------------------------------------
 // POST /api/mobile/reservations/:id/board
@@ -372,6 +659,8 @@ router.post('/reservations/:id/cancel', requireAuth, async (req, res) => {
     return res.status(500).json({ ok: false, error: 'internal_error' });
   }
 });
+
+
 
 
 module.exports = router;
