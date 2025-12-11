@@ -9,13 +9,14 @@ export default function PassengerPopup({
   passenger, seat,
   onDelete, onMove, onEdit,
   onMoveToOtherTrip,    // ← aici
-  onPay,
+    onPayCash,
+  onPayCard,
   selectedDate,         // ← aici
   selectedHour,         // ← aici
   originalRouteId,      // ← aici
   onClose,
   tripId,
-  setToastMessage, setToastType
+  showToast
 }) {
 
 
@@ -106,6 +107,70 @@ export default function PassengerPopup({
 
 
 
+  // ─── 3️⃣ Payment status pentru rezervarea acestui pasager ───
+  const [paymentStatus, setPaymentStatus] = useState(null);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentError, setPaymentError] = useState(null);
+
+  // La deschiderea popup-ului, încărcăm statusul plății pentru rezervare
+  useEffect(() => {
+    const reservationId = passenger?.reservation_id;
+    if (!reservationId) {
+      setPaymentStatus(null);
+      setPaymentError(null);
+      return;
+    }
+
+    let ignore = false;
+    const run = async () => {
+      try {
+        setPaymentLoading(true);
+        setPaymentError(null);
+
+        const res = await fetch(`/api/reservations/${reservationId}/payments/status`, {
+          credentials: 'include',
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          console.error('[PassengerPopup] /payments/status error:', data);
+          if (!ignore) {
+            setPaymentStatus(null);
+            setPaymentError(data?.error || 'Eroare la citirea plății');
+          }
+          return;
+        }
+
+        if (!ignore) {
+          setPaymentStatus(data?.payment || null);
+        }
+      } catch (err) {
+        console.error('[PassengerPopup] /payments/status exception:', err);
+        if (!ignore) {
+          setPaymentStatus(null);
+          setPaymentError(err.message || 'Eroare la citirea plății');
+        }
+      } finally {
+        if (!ignore) {
+          setPaymentLoading(false);
+        }
+      }
+    };
+
+    run();
+    return () => {
+      ignore = true;
+    };
+  }, [passenger?.reservation_id]);
+
+  // Calculăm dacă putem afișa „Re-emite bon”
+  // - pentru card: status = 'pos_ok_waiting_receipt' + receipt_status = 'error_needs_retry'
+  // - pentru alte cazuri (dacă vei avea): acceptăm și 'paid'
+  const canRetryReceipt =
+    !!paymentStatus &&
+    (paymentStatus.status === 'pos_ok_waiting_receipt' ||
+      paymentStatus.status === 'paid') &&
+    paymentStatus.receipt_status === 'error_needs_retry';
 
 
 
@@ -163,7 +228,48 @@ export default function PassengerPopup({
   };
 
 
+// Handler pentru „Re-emite bon”
+  const handleRetryReceipt = async () => {
+    if (!paymentStatus || !passenger?.reservation_id) return;
 
+    try {
+      const reservationId = passenger.reservation_id;
+      const paymentId = paymentStatus.payment_id;
+
+      const res = await fetch(
+        `/api/reservations/${reservationId}/payments/${paymentId}/retry-receipt`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({}), // momentan nu avem extra date
+        }
+      );
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data?.ok) {
+        const msg =
+          data?.error ||
+          data?.message ||
+          `Eroare la inițierea reemiterii bonului (HTTP ${res.status})`;
+        showToast(msg, 'error', 8000);
+        return;
+      }
+
+      // opțional: ascundem butonul până vine noul status
+      setPaymentStatus(prev =>
+        prev
+          ? { ...prev, receipt_status: 'none', error_message: null }
+          : prev
+      );
+
+      showToast('Retry bon fiscal trimis către agent…', 'info', 0);
+    } catch (err) {
+      console.error('[PassengerPopup] handleRetryReceipt error:', err);
+      showToast(err.message || 'Eroare la reemiterea bonului.', 'error', 8000);
+    }
+  };
 
 
 
@@ -331,13 +437,32 @@ export default function PassengerPopup({
         </button>
 
 
-        <button
-          onClick={onPay}
-          className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-emerald-700"
-        >
-          💰 Achită
-        </button>
+        {onPayCash && (
+          <button
+            onClick={onPayCash}
+            className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-emerald-700"
+          >
+            💵 Achită cash
+          </button>
+        )}
 
+        {onPayCard && (
+          <button
+            onClick={onPayCard}
+            className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-emerald-700"
+          >
+            💳 Achită cu cardul
+          </button>
+        )}
+
+        {canRetryReceipt && (
+          <button
+            onClick={handleRetryReceipt}
+            className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-amber-700"
+          >
+            🧾 Re-emite bon fiscal
+          </button>
+        )}
 
 
         <button
@@ -399,28 +524,34 @@ export default function PassengerPopup({
         cancelText="Renunță"
         confirmText="Confirmă"
         onCancel={() => setShowNoShowConfirm(false)}
-        onConfirm={async () => {
-          try {
-            if (!passenger.reservation_id) throw new Error('reservation_id missing');
-            const payload = { reservation_id: passenger.reservation_id };
-            const res = await fetch('/api/no-shows', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            });
-            const json = await res.json();
-            if (json.error) throw new Error(json.error);
-            setToastMessage('Neprezentare înregistrată cu succes');
-            setToastType('success');
-          } catch (err) {
-            setToastMessage(err.message || 'Eroare la înregistrare neprezentare');
-            setToastType('error');
-          } finally {
-            setShowNoShowConfirm(false);
-            onClose();
-            setTimeout(() => setToastMessage(''), 3000);
-          }
-        }}
+          onConfirm={async () => {
+    try {
+      const res = await fetch(`/api/no-shows`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reservation_id: passenger.reservation_id,
+          trip_id: tripId,
+        }),
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+
+      // ✅ toast prin handlerul central
+      showToast('Neprezentare înregistrată cu succes', 'success', 3000);
+    } catch (err) {
+      showToast(
+        err.message || 'Eroare la înregistrare neprezentare',
+        'error',
+        6000
+      );
+    } finally {
+      setShowNoShowConfirm(false);
+      onClose();
+      // ❌ NU mai avem setTimeout aici
+    }
+  }}
+
       />
 
       {/* Confirmare blacklist */}
@@ -430,33 +561,45 @@ export default function PassengerPopup({
         cancelText="Renunță"
         confirmText="Adaugă"
         onCancel={() => setShowBlacklistConfirm(false)}
-        onConfirm={async () => {
+          onConfirm={async () => {
+    try {
+      const payload = {
+        person_id: passenger.person_id || passenger.id,
+        reason: blacklistReason,
+        // added_by_employee_id implicit în backend
+      };
 
-          const payload = {
-            person_id: passenger.person_id || passenger.id,
-            reason: blacklistReason,
-            // added_by_employee_id implicit în backend
-          };
-          const res = await fetch('/api/blacklist', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-          const data = await res.json();
-          if (data.already) {
-            setToastMessage('Persoana era deja în blacklist');
-            setToastType('info');
-          } else if (!res.ok) {
-            setToastMessage(data.error || 'Eroare la adăugare în blacklist');
-            setToastType('error');
-          } else {
-            setToastMessage('Adăugat în blacklist cu succes');
-            setToastType('success');
-          }
-          setShowBlacklistConfirm(false);
-          onClose();
-          setTimeout(() => setToastMessage(''), 3000);
-        }}
+      const res = await fetch('/api/blacklist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+
+      if (data.already) {
+        showToast('Persoana era deja în blacklist', 'info', 3000);
+      } else if (!res.ok) {
+        showToast(
+          data.error || 'Eroare la adăugare în blacklist',
+          'error',
+          6000
+        );
+      } else {
+        showToast('Adăugat în blacklist cu succes', 'success', 3000);
+      }
+    } catch (err) {
+      showToast(
+        err.message || 'Eroare la adăugare în blacklist',
+        'error',
+        6000
+      );
+    } finally {
+      setShowBlacklistConfirm(false);
+      onClose();
+      // ❌ fără setTimeout pe toast aici
+    }
+  }}
+
       >
         <div className="text-sm mb-2">
           Ești sigur că vrei să adaugi în blacklist?

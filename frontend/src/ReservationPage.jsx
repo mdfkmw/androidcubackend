@@ -50,7 +50,7 @@ export default function ReservationPage({ userRole, user }) {
   const [onlineSettings, setOnlineSettings] = useState(null);
   const [onlineSettingsLoaded, setOnlineSettingsLoaded] = useState(false);
 
-    const [userPreferences, setUserPreferences] = useState(null);
+  const [userPreferences, setUserPreferences] = useState(null);
   const [userPrefsLoaded, setUserPrefsLoaded] = useState(false);
 
 
@@ -132,6 +132,38 @@ export default function ReservationPage({ userRole, user }) {
   // 🔔 Textul și tipul notificărilor (toast)
   const [toastMessage, setToastMessage] = useState('');
   const [toastType, setToastType] = useState('info');
+  const toastHideTimerRef = useRef(null);
+
+  const showToast = useCallback((message, type = 'info', durationMs = 3000) => {
+    // setăm toastul
+    setToastMessage(message);
+    setToastType(type);
+
+    // oprim orice timer vechi
+    if (toastHideTimerRef.current) {
+      clearTimeout(toastHideTimerRef.current);
+      toastHideTimerRef.current = null;
+    }
+
+    // dacă durationMs > 0, programăm auto-clear
+    if (durationMs > 0) {
+      toastHideTimerRef.current = setTimeout(() => {
+        setToastMessage('');
+        toastHideTimerRef.current = null;
+      }, durationMs);
+    }
+  }, []);
+  //toast cleanup
+  useEffect(() => {
+    return () => {
+      if (toastHideTimerRef.current) {
+        clearTimeout(toastHideTimerRef.current);
+        toastHideTimerRef.current = null;
+      }
+    };
+  }, []);
+
+
 
   // Cheie stabilă pentru stații (prima | ultima) — evită rerender-uri inutile
   const stationsKey = useMemo(() => {
@@ -311,15 +343,14 @@ export default function ReservationPage({ userRole, user }) {
         message = `Ultimul apel: ${passengerName} - ${targetValue}.${segmentText}${warningText}`;
       }
 
-      setToastType('info');
-      setToastMessage(message);
-      timeout = setTimeout(() => setToastMessage(''), 2500);
+      showToast(message, 'info', 2500);
+
     };
 
     fetchDetailsAndToast();
     return () => {
       ignore = true;
-      if (timeout) clearTimeout(timeout);
+
     };
   }, [incomingCall, setToastMessage, setToastType]);
 
@@ -348,9 +379,12 @@ export default function ReservationPage({ userRole, user }) {
 
     if (applied) {
       const labelText = seatLabel ? ` (loc ${seatLabel})` : '';
-      setToastType('info');
-      setToastMessage(`Număr preluat din ultimul apel${labelText}: ${targetValue}`);
-      setTimeout(() => setToastMessage(''), 2500);
+      showToast(
+        `Număr preluat din ultimul apel${labelText}: ${targetValue}`,
+        'info',
+        2500
+      );
+
     }
 
     return applied;
@@ -604,9 +638,12 @@ export default function ReservationPage({ userRole, user }) {
       return next;
     });
 
-    setToastMessage('Unele locuri sunt în curs de rezervare de alt agent și au fost scoase din selecție.');
-    setToastType('error');
-    setTimeout(() => setToastMessage(''), 4000);
+    showToast(
+      'Unele locuri sunt în curs de rezervare de alt agent și au fost scoase din selecție.',
+      'error',
+      4000
+    );
+
     return false;
   }, [tripId, selectedSeats, refreshIntents]);
 
@@ -709,7 +746,7 @@ export default function ReservationPage({ userRole, user }) {
   const [showSeatTextSettings, setShowSeatTextSettings] = useState(false); // popup Text
 
 
-    // 🔄 Încărcăm preferințele utilizatorului din backend (user_preferences.prefs_json)
+  // 🔄 Încărcăm preferințele utilizatorului din backend (user_preferences.prefs_json)
   useEffect(() => {
     let cancelled = false;
 
@@ -732,7 +769,7 @@ export default function ReservationPage({ userRole, user }) {
 
         const seatmap = json.seatmap && typeof json.seatmap === 'object' ? json.seatmap : {};
         const narrow = seatmap.narrow && typeof seatmap.narrow === 'object' ? seatmap.narrow : {};
-        const wide   = seatmap.wide && typeof seatmap.wide === 'object' ? seatmap.wide : {};
+        const wide = seatmap.wide && typeof seatmap.wide === 'object' ? seatmap.wide : {};
 
         // 🔹 Vedere îngustă
         if (typeof narrow.textSize === 'number') {
@@ -751,7 +788,7 @@ export default function ReservationPage({ userRole, user }) {
         }
         if (typeof wide.width === 'number' || typeof wide.height === 'number') {
           setWideSeatSize(prev => ({
-            width:  typeof wide.width  === 'number' ? wide.width  : prev.width,
+            width: typeof wide.width === 'number' ? wide.width : prev.width,
             height: typeof wide.height === 'number' ? wide.height : prev.height,
           }));
         }
@@ -771,7 +808,7 @@ export default function ReservationPage({ userRole, user }) {
 
 
 
-    // 💾 Helper: actualizează doar zona seatmap din prefs_json și trimite PUT la /api/user/preferences
+  // 💾 Helper: actualizează doar zona seatmap din prefs_json și trimite PUT la /api/user/preferences
   const persistSeatmapPrefs = useCallback((partialSeatmap) => {
     setUserPreferences(prev => {
       const base = prev && typeof prev === 'object' ? prev : {};
@@ -809,59 +846,59 @@ export default function ReservationPage({ userRole, user }) {
     });
   }, []);
 
-// Salvează automat setările pentru vedere îngustă (text + culoare)
-useEffect(() => {
-  if (!userPrefsLoaded) return;
-  persistSeatmapPrefs({
-    narrow: {
-      textSize: seatTextSizeNarrow,
-      textColor: seatTextColorNarrow,
-    },
-  });
-}, [seatTextSizeNarrow, seatTextColorNarrow, userPrefsLoaded, persistSeatmapPrefs]);
+  // Salvează automat setările pentru vedere îngustă (text + culoare)
+  useEffect(() => {
+    if (!userPrefsLoaded) return;
+    persistSeatmapPrefs({
+      narrow: {
+        textSize: seatTextSizeNarrow,
+        textColor: seatTextColorNarrow,
+      },
+    });
+  }, [seatTextSizeNarrow, seatTextColorNarrow, userPrefsLoaded, persistSeatmapPrefs]);
 
-// Salvează automat setările pentru vedere largă (text + culoare + dimensiuni loc)
-useEffect(() => {
-  if (!userPrefsLoaded) return;
-  persistSeatmapPrefs({
-    wide: {
-      textSize: seatTextSizeWide,
-      textColor: seatTextColorWide,
-      width: wideSeatSize.width,
-      height: wideSeatSize.height,
-    },
-  });
-}, [
-  seatTextSizeWide,
-  seatTextColorWide,
-  wideSeatSize.width,
-  wideSeatSize.height,
-  userPrefsLoaded,
-  persistSeatmapPrefs,
-]);
+  // Salvează automat setările pentru vedere largă (text + culoare + dimensiuni loc)
+  useEffect(() => {
+    if (!userPrefsLoaded) return;
+    persistSeatmapPrefs({
+      wide: {
+        textSize: seatTextSizeWide,
+        textColor: seatTextColorWide,
+        width: wideSeatSize.width,
+        height: wideSeatSize.height,
+      },
+    });
+  }, [
+    seatTextSizeWide,
+    seatTextColorWide,
+    wideSeatSize.width,
+    wideSeatSize.height,
+    userPrefsLoaded,
+    persistSeatmapPrefs,
+  ]);
 
 
-  
+
 
   // valori efective în funcție de vedere (îngustă / largă)
-const effectiveSeatTextSize = isWideView ? seatTextSizeWide : seatTextSizeNarrow;
-const effectiveSeatTextColor = isWideView ? seatTextColorWide : seatTextColorNarrow;
+  const effectiveSeatTextSize = isWideView ? seatTextSizeWide : seatTextSizeNarrow;
+  const effectiveSeatTextColor = isWideView ? seatTextColorWide : seatTextColorNarrow;
 
-const handleSeatTextSizeChange = (value) => {
-  if (isWideView) {
-    setSeatTextSizeWide(value);
-  } else {
-    setSeatTextSizeNarrow(value);
-  }
-};
+  const handleSeatTextSizeChange = (value) => {
+    if (isWideView) {
+      setSeatTextSizeWide(value);
+    } else {
+      setSeatTextSizeNarrow(value);
+    }
+  };
 
-const handleSeatTextColorChange = (value) => {
-  if (isWideView) {
-    setSeatTextColorWide(value);
-  } else {
-    setSeatTextColorNarrow(value);
-  }
-};
+  const handleSeatTextColorChange = (value) => {
+    if (isWideView) {
+      setSeatTextColorWide(value);
+    } else {
+      setSeatTextColorNarrow(value);
+    }
+  };
 
 
 
@@ -938,13 +975,13 @@ const handleSeatTextColorChange = (value) => {
 
     const seatWidth = isWideView ? wideSeatSize.width : 105;
     const seatHeight = isWideView ? wideSeatSize.height : 100;
-        const baseSeatTextSize = Number(isWideView ? seatTextSizeWide : seatTextSizeNarrow) || 11;
+    const baseSeatTextSize = Number(isWideView ? seatTextSizeWide : seatTextSizeNarrow) || 11;
     const seatTextColor = (isWideView ? seatTextColorWide : seatTextColorNarrow) || '#ffffff';
 
-    const nameFontPrimary   = `600 ${baseSeatTextSize + 2}px "Inter", sans-serif`;
+    const nameFontPrimary = `600 ${baseSeatTextSize + 2}px "Inter", sans-serif`;
     const nameFontSecondary = `600 ${baseSeatTextSize + 1}px "Inter", sans-serif`;
-    const lineFont          = `${baseSeatTextSize}px "Inter", sans-serif`;
-    const smallFont         = `italic ${Math.max(baseSeatTextSize - 1, 8)}px "Inter", sans-serif`;
+    const lineFont = `${baseSeatTextSize}px "Inter", sans-serif`;
+    const smallFont = `italic ${Math.max(baseSeatTextSize - 1, 8)}px "Inter", sans-serif`;
 
 
     const seatGap = 5;
@@ -1168,16 +1205,12 @@ const handleSeatTextColorChange = (value) => {
   const handleSeatMapExport = useCallback(
     async (driverName = '') => {
       if (seatViewMode !== 'grid') {
-        setToastMessage('Exportul este disponibil doar în diagrama clasică.');
-        setToastType('warning');
-        setTimeout(() => setToastMessage(''), 2500);
+        showToast('Exportul este disponibil doar în diagrama clasică.', 'warning', 2500);
         return;
       }
 
       if (!seatMapRef.current || !Array.isArray(seats) || seats.length === 0) {
-        setToastMessage('Nu există o diagramă disponibilă pentru export.');
-        setToastType('error');
-        setTimeout(() => setToastMessage(''), 2500);
+        showToast('Nu există o diagramă disponibilă pentru export.', 'error', 2500);
         return;
       }
 
@@ -1200,9 +1233,8 @@ const handleSeatTextColorChange = (value) => {
         document.body.removeChild(link);
       } catch (err) {
         console.error('Export SeatMap error', err);
-        setToastMessage('Exportul a eșuat. Încearcă din nou.');
-        setToastType('error');
-        setTimeout(() => setToastMessage(''), 3000);
+
+        showToast('Exportul a eșuat. Încearcă din nou.', 'error', 2500);
       } finally {
         setIsExportingSeatMap(false);
       }
@@ -1393,6 +1425,124 @@ const handleSeatTextColorChange = (value) => {
 
 
 
+  // 🔍 statusul ultimei plăți (din tabela payments)
+  const [lastPaymentStatus, setLastPaymentStatus] = useState(null);
+  const paymentStatusTimerRef = useRef(null);
+
+  // pornește polling către /payments/status pentru o rezervare
+  const startPaymentStatusPolling = useCallback(
+    (reservationId) => {
+      if (!reservationId) return;
+
+      // oprim orice polling vechi
+      if (paymentStatusTimerRef.current) {
+        clearInterval(paymentStatusTimerRef.current);
+        paymentStatusTimerRef.current = null;
+      }
+
+      const fetchOnce = async () => {
+        try {
+          const r = await fetch(
+            `/api/reservations/${reservationId}/payments/status`,
+            { credentials: 'include' },
+          );
+          const data = await r.json().catch(() => ({}));
+
+          if (!r.ok) {
+            console.error('[payments/status] eroare:', data);
+            return;
+          }
+
+          const p = data?.payment || null;
+          setLastPaymentStatus(p);
+
+          if (!p) {
+            // încă nu există payment în DB, continuăm să poll-uim
+            return;
+          }
+
+          const status = p.status;
+          const receiptStatus = p.receipt_status;
+          const methodLabel =
+            p.payment_method === 'card'
+              ? 'cu cardul'
+              : p.payment_method === 'cash'
+                ? 'cash'
+                : 'necunoscută';
+          const amountStr =
+            typeof p.amount === 'number' ? `${p.amount.toFixed(2)} RON` : '';
+          const errorMsg = p.error_message || '';
+
+          const isFinal =
+            status === 'paid' ||
+            status === 'failed' ||
+            status === 'refunded' ||
+            status === 'voided' ||
+            receiptStatus === 'ok' ||
+            receiptStatus === 'error_needs_retry';
+
+          if (isFinal) {
+            // oprim polling-ul
+            if (paymentStatusTimerRef.current) {
+              clearInterval(paymentStatusTimerRef.current);
+              paymentStatusTimerRef.current = null;
+            }
+
+            // 🧾 TOAST FINAL – folosim doar showToast
+
+            if (status === 'paid' && receiptStatus === 'ok') {
+              // ✅ SUCCES – 10 secunde pe ecran
+              showToast(
+                `Plată ${methodLabel} ${amountStr} – finalizată ✅ (bon OK)`,
+                'success',
+                10000
+              );
+            } else if (status === 'failed') {
+              const msgFinal = [
+                `Plata ${methodLabel} ${amountStr} a eșuat.`,
+                errorMsg ? `Eroare: ${errorMsg}` : '',
+              ]
+                .filter(Boolean)
+                .join('\n');
+              // ❌ EROARE – 10 secunde
+              showToast(msgFinal, 'error', 10000);
+            } else if (receiptStatus === 'error_needs_retry') {
+              const msgFinal = [
+                `POS OK ${amountStr}, dar bonul fiscal are eroare.`,
+                'Este necesară reemiterea bonului (retry fiscal).',
+              ].join('\n');
+              // ⚠️ POS OK, bon cu eroare – 10 secunde
+              showToast(msgFinal, 'warning', 10000);
+            }
+          }
+        } catch (err) {
+          console.error('[payments/status] eroare la polling', err);
+        }
+      };
+
+      // primul call imediat
+      fetchOnce();
+      // apoi poll la X ms (modifici valoarea 2000 după preferință)
+      paymentStatusTimerRef.current = setInterval(fetchOnce, 500);
+    },
+    [showToast],
+  );
+
+
+
+
+
+
+  // cleanup la unmount
+  useEffect(() => {
+    return () => {
+      if (paymentStatusTimerRef.current) {
+        clearInterval(paymentStatusTimerRef.current);
+        paymentStatusTimerRef.current = null;
+      }
+    };
+  }, []);
+
 
 
 
@@ -1475,20 +1625,16 @@ const handleSeatTextColorChange = (value) => {
           discount_amount: data.discount_amount,
           combinable: !!data.combinable
         });
-        setToastMessage(`Cod aplicat: -${data.discount_amount} lei`);
-        setToastType('success');
-        setTimeout(() => setToastMessage(''), 2500);
+        showToast(`Cod aplicat: -${data.discount_amount} lei`, 'success', 2500);
+
       } else {
         setPromoApplied(null);
-        setToastMessage(data.reason || 'Cod invalid');
-        setToastType('error');
-        setTimeout(() => setToastMessage(''), 3000);
+        showToast('Cod invalid', 'error', 3000);
       }
     } catch (e) {
       setPromoApplied(null);
-      setToastMessage('Eroare la validare cod');
-      setToastType('error');
-      setTimeout(() => setToastMessage(''), 3000);
+      showToast('Eroare la validare cod', 'error', 3000);
+
     }
   };
 
@@ -3119,85 +3265,91 @@ const handleSeatTextColorChange = (value) => {
         throw new Error('ID rezervare invalid pentru plata cash');
       }
 
-      const payload = {};
+      const payload = {
+        employeeId: employeeId ?? user?.id,
+      };
       if (description && description.trim()) {
         payload.description = description.trim();
       }
 
-      const pr = await fetch(`/api/reservations/${reservationId}/payments/cash-intent`, {
+      const res = await fetch(`/api/reservations/${reservationId}/payments/cash-agent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const pj = await pr.json().catch(() => ({}));
 
-      if (!(pr.ok && pj?.print_in_browser === true && pj?.fiscal)) {
-        const err = new Error(pj?.error || 'Eroare la inițierea plății cash');
-        err.payload = pj;
-        err.dev = pj?.dev;
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data?.ok) {
+        const msg =
+          data?.error ||
+          data?.message ||
+          `Eroare la inițierea plății cash (HTTP ${res.status})`;
+        const err = new Error(msg);
+        // pentru debug: atașăm payloadul primit de la backend
+        err.payload = data;
         throw err;
       }
 
-      const devLabel = pj?.dev || '';
-
-      const callWithRetry = async (url, bodyOrNull) => {
-        const started = Date.now();
-        const maxMs = 180000;
-        while (true) {
-          const opts = { method: 'POST', credentials: 'omit' };
-          if (bodyOrNull && typeof bodyOrNull === 'object') {
-            opts.headers = { 'Content-Type': 'application/json' };
-            opts.body = JSON.stringify(bodyOrNull);
-          }
-          const r = await fetch(url, opts);
-          if (r.ok) return r;
-          const txt = await r.text().catch(() => '');
-          if (r.status === 409 || /NO_PAPER/i.test(txt)) {
-            if (Date.now() - started > maxMs) {
-              const timeoutErr = new Error(`NO_PAPER timeout (3min) on ${url}`);
-              timeoutErr.dev = devLabel;
-              throw timeoutErr;
-            }
-            const deviceLabel = devLabel ? `la casa ${devLabel}` : 'la casă';
-            setToastMessage(`Lipsește hârtia ${deviceLabel}. Așteptăm să revină…`);
-            setToastType('info');
-            await new Promise((res) => setTimeout(res, 3000));
-            continue;
-          }
-          const httpErr = new Error(`HTTP ${r.status} on ${url}: ${txt}`);
-          httpErr.dev = devLabel;
-          httpErr.status = r.status;
-          throw httpErr;
-        }
+      // UI-ul nu folosește acum valorile, dar le întoarcem pentru viitor
+      return {
+        amount: data.amount,
+        paymentId: data.payment_id,
+        jobId: data.job_id,
       };
+    },
+    [user?.id]
+  );
 
-      await callWithRetry(pj.fiscal.open.url, pj.fiscal.open.body);
-      await callWithRetry(pj.fiscal.sale.url, pj.fiscal.sale.body);
-      await callWithRetry(pj.fiscal.pay.url, pj.fiscal.pay.body);
-      await callWithRetry(pj.fiscal.close.url, null);
 
-      const confirmRes = await fetch(`/api/reservations/${reservationId}/payments/confirm`, {
+    const performCardPayment = useCallback(
+    async ({ reservationId, employeeId }) => {
+      if (!reservationId) {
+        throw new Error('ID rezervare invalid pentru plata cu card');
+      }
+
+      const r = await fetch(`/api/reservations/${reservationId}/payments/card-agent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           employeeId: employeeId ?? user?.id,
-          amount: pj.amount,
         }),
       });
 
-      if (!confirmRes.ok) {
-        const errPayload = await confirmRes.json().catch(() => ({}));
-        const confirmErr = new Error(
-          errPayload?.error || errPayload?.message || `Confirmare cash eșuată (${confirmRes.status})`
-        );
-        confirmErr.dev = devLabel;
-        throw confirmErr;
+      if (!r.ok) {
+        const payload = await r.json().catch(() => ({}));
+        const msg =
+          payload?.error ||
+          payload?.message ||
+          `Eroare inițiere plată card (agent) (${r.status})`;
+        const err = new Error(msg);
+        err.payload = payload;
+        throw err;
       }
 
-      return { amount: pj.amount, dev: devLabel };
+      const data = await r.json().catch(() => ({}));
+      if (!data?.ok) {
+        const msg =
+          data?.error ||
+          data?.message ||
+          'Răspuns invalid de la /payments/card-agent';
+        const err = new Error(msg);
+        err.payload = data;
+        throw err;
+      }
+
+      // UI-ul nu folosește acum valorile, dar le întoarcem pentru viitor
+      return {
+        amount: data.amount,
+        paymentId: data.payment_id,
+        jobId: data.job_id,
+      };
     },
-    [setToastMessage, setToastType, user?.id]
+    [user?.id]
   );
+
+
+
 
   // 💾 Trimite rezervarea către backend și afișează notificare + reîncarcă locurile
   const submitReservation = async () => {
@@ -3238,9 +3390,7 @@ const handleSeatTextColorChange = (value) => {
 
     try {
       if (!selectedRoute?.id || !hasActiveSchedule) {
-        setToastMessage('Selectează ruta și ora înainte de a salva.');
-        setToastType('error');
-        setTimeout(() => setToastMessage(''), 3000);
+        showToast('Selectează ruta și ora înainte de a salva.', 'error', 3000);
         return;
       }
 
@@ -3249,15 +3399,8 @@ const handleSeatTextColorChange = (value) => {
         return;
       }
 
-      if (!selectedSeats.length) {
-        setToastMessage('Nu există locuri selectate.');
-        setToastType('error');
-        setTimeout(() => setToastMessage(''), 3000);
-        return;
-      }
-
-      setToastMessage('Se salvează rezervarea...');
-      setToastType('info');
+      // Mesaj clar că se salvează (fără timeout – se va înlocui de mesajele următoare)
+      showToast('Se salvează rezervarea...', 'info', 0);
 
       const derivedListId =
         selectedPriceListId || (passengersData[selectedSeats[0]?.id]?.price_list_id ?? null);
@@ -3292,7 +3435,9 @@ const handleSeatTextColorChange = (value) => {
           if (d?.reservation_id) {
             const version = Number(d.version);
             if (!Number.isInteger(version)) {
-              throw new Error('Nu am putut încărca versiunea rezervării. Reîncarcă pagina și încearcă din nou.');
+              throw new Error(
+                'Nu am putut încărca versiunea rezervării. Reîncarcă pagina și încearcă din nou.',
+              );
             }
             passengerPayload.version = version;
           }
@@ -3300,9 +3445,7 @@ const handleSeatTextColorChange = (value) => {
           return passengerPayload;
         });
       } catch (err) {
-        setToastMessage(err.message);
-        setToastType('error');
-        setTimeout(() => setToastMessage(''), 3000);
+        showToast(err.message, 'error', 3000);
         return;
       }
 
@@ -3340,9 +3483,7 @@ const handleSeatTextColorChange = (value) => {
       const data = await response.json().catch(() => ({}));
 
       if (response.status === 409) {
-        setToastMessage(data.error || 'Loc ocupat pe segment');
-        setToastType('error');
-        setTimeout(() => setToastMessage(''), 4000);
+        showToast(data.error || 'Loc ocupat pe segment', 'error', 4000);
         await refreshIntents();
         await reloadSeatsForCurrentTrip();
         return;
@@ -3359,33 +3500,39 @@ const handleSeatTextColorChange = (value) => {
           ? [data.id]
           : [];
 
+      // curățăm UI-ul
       setSelectedSeats([]);
       setPassengersData({});
       setIntentHolds({});
       setAutoSelectPaused(true);
       await refreshIntents();
 
+      // 👉 verificăm dacă avem cash și/sau card
       const hadCash =
         !isIdempotentHit &&
         Array.isArray(payload?.passengers) &&
         payload.passengers.some((p) => p.payment_method === 'cash');
 
+      const hadCard =
+        !isIdempotentHit &&
+        Array.isArray(payload?.passengers) &&
+        payload.passengers.some((p) => p.payment_method === 'card');
+
+      // Mesaj inițial după salvare (fără timeout sau cu mic timeout, dar prin showToast)
       if (isIdempotentHit) {
-        setToastMessage('Rezervarea era deja salvată (cerere repetată).');
-        setToastType('info');
-        setTimeout(() => setToastMessage(''), 2500);
-      } else if (hadCash) {
-        setToastMessage('Rezervare salvată. Se tipărește bonul...');
-        setToastType('info');
+        showToast('Rezervarea era deja salvată (cerere repetată).', 'info', 2500);
+      } else if (hadCash && !hadCard) {
+        showToast('Rezervare salvată. Se tipărește bonul...', 'info', 0);
+      } else if (hadCard && !hadCash) {
+        showToast('Rezervare salvată. Se inițiază plata cu cardul...', 'info', 0);
+      } else if (hadCash && hadCard) {
+        showToast('Rezervare salvată. Se procesează plățile (cash + card)...', 'info', 0);
       } else {
-        setToastMessage('Rezervare salvată ✅');
-        setToastType('success');
-        setTimeout(() => setToastMessage(''), 2500);
+        showToast('Rezervare salvată ✅', 'success', 2500);
       }
 
+      // 📠 PLATĂ CASH – prin agent (payments + agent_jobs)
       if (!isIdempotentHit && hadCash) {
-        let allPrintedOk = true;
-
         for (const id of createdReservationIds) {
           try {
             await performCashReceipt({
@@ -3394,45 +3541,74 @@ const handleSeatTextColorChange = (value) => {
               employeeId: user?.id,
             });
           } catch (e) {
-            allPrintedOk = false;
-            const msg = String(e?.message || e);
-            if (msg.includes('NO_PAPER') || msg.includes('409')) {
-              const deviceLabel = e?.dev ? `la casa ${e.dev}` : '';
-              setToastMessage(`Lipsește hârtia${deviceLabel ? ` ${deviceLabel}` : ''}.`);
-            } else if (e?.payload?.error) {
-              setToastMessage(
-                `Eroare la tipărirea bonului pentru #${id}: ${e.payload.error}`
-              );
-            } else {
-              setToastMessage(`Eroare tipărire locală (#${id}): ${msg}`);
-            }
-            setToastType('error');
+            console.error(
+              '[handleSaveReservation] eroare inițiere plată cash pentru',
+              id,
+              e,
+            );
+            const msg =
+              e?.message ||
+              e?.payload?.error ||
+              `Eroare la inițierea plății cash pentru #${id}`;
+            showToast(msg, 'error', 6000);
           }
         }
 
-        if (allPrintedOk) {
-          setToastMessage('Rezervare salvată și achitată (cash) – bon tipărit ✅');
-          setToastType('success');
-          setTimeout(() => setToastMessage(''), 2500);
-        } else {
-          setReceiptErrorMsg('Plata cash nu s-a putut efectua. Rezervarea este salvată.');
-          setReceiptErrorOpen(true);
-          setToastMessage('Rezervare salvată. Tipărirea bonului a eșuat.');
-          setToastType('error');
-          setTimeout(() => setToastMessage(''), 3500);
+        if (createdReservationIds.length > 0) {
+          // urmărim statusul ultimei rezervări create
+          startPaymentStatusPolling(
+            createdReservationIds[createdReservationIds.length - 1],
+          );
         }
+
+        // mesaj clar că jobul a plecat spre agent
+        showToast('Rezervare salvată. Plată cash inițiată (agent)…', 'info', 0);
       }
+
+      // 💳 PLATĂ CARD – prin agent (payments + agent_jobs)
+      if (!isIdempotentHit && hadCard) {
+        for (const id of createdReservationIds) {
+          try {
+            await performCardPayment({
+              reservationId: id,
+              employeeId: user?.id,
+            });
+          } catch (e) {
+            console.error(
+              '[handleSaveReservation] eroare inițiere plată card (agent) pentru',
+              id,
+              e,
+            );
+            const msg =
+              e?.message ||
+              e?.payload?.error ||
+              `Eroare la inițierea plății cu cardul pentru #${id}`;
+            showToast(msg, 'error', 6000);
+          }
+        }
+
+        if (createdReservationIds.length > 0) {
+          // urmărim statusul ultimei rezervări create
+          startPaymentStatusPolling(
+            createdReservationIds[createdReservationIds.length - 1],
+          );
+        }
+
+        // mesaj clar că jobul a plecat spre agent
+        showToast('Rezervare salvată. Plată cu cardul inițiată (agent)…', 'info', 0);
+      }
+
 
       await reloadSeatsForCurrentTrip();
     } catch (err) {
       console.error('Eroare la salvarea rezervării:', err);
-      setToastMessage(err.message || 'A apărut o eroare.');
-      setToastType('error');
-      setTimeout(() => setToastMessage(''), 3000);
+      showToast(err.message || 'A apărut o eroare.', 'error', 4000);
     } finally {
       setIsSaving(false);
     }
   };
+
+
 
 
 
@@ -3985,22 +4161,27 @@ const handleSeatTextColorChange = (value) => {
 
 
 
-  // [NEW] Achitare rapidă (cash) a rezervării din popup
   const handlePayReservation = useCallback(async () => {
     try {
       if (!popupPassenger?.reservation_id) return;
+
       setPaying(true);
-      const res = await fetch(`/api/reservations/${popupPassenger.reservation_id}/summary`);
+
+      // verificăm dacă nu e deja plătită
+      const res = await fetch(
+        `/api/reservations/${popupPassenger.reservation_id}/summary`,
+      );
       const sum = await res.json();
       if (sum?.paid) {
-        setToastMessage('Rezervarea este deja achitată.');
-        setToastType('info');
+        showToast('Rezervarea este deja achitată.', 'info', 3000);
         setPaying(false);
         return;
       }
+
       const descParts = [];
       if (receiptNote && receiptNote.trim()) descParts.push(receiptNote.trim());
-      const fromTo = `${popupPassenger?.board_at || ''} → ${popupPassenger?.exit_at || ''}`.trim();
+      const fromTo = `${popupPassenger?.board_at || ''} → ${popupPassenger?.exit_at || ''
+        }`.trim();
       if (fromTo && fromTo !== '→') descParts.push(`Bilet ${fromTo}`);
       const description = descParts.join(' | ');
 
@@ -4011,51 +4192,34 @@ const handleSeatTextColorChange = (value) => {
           employeeId: user?.id,
         });
       } catch (err) {
-        const msg = String(err?.message || err);
-        if (msg.includes('NO_PAPER') || msg.includes('409')) {
-          const deviceLabel = err?.dev ? `la casa ${err.dev}` : '';
-          setToastMessage(`Lipsește hârtia${deviceLabel ? ` ${deviceLabel}` : ''}.`);
-        } else {
-          setToastMessage(err?.message || 'Eroare la plată');
-        }
-        setToastType('error');
-        setReceiptErrorMsg(
-          `Nu s-a emis bonul fiscal.\n${msg ? `Detalii: ${msg}` : ''}`
-        );
-        setReceiptErrorOpen(true);
+        console.error('[handlePayReservation] performCashReceipt error:', err);
+        const msg =
+          err?.message ||
+          err?.payload?.error ||
+          'Eroare la inițierea plății cash';
+        showToast(msg, 'error', 6000);
         return;
       }
 
+      // pornim polling pe statusul plății în DB
+      startPaymentStatusPolling(popupPassenger.reservation_id);
 
-      // ✅ UI optimist: marchează imediat pasagerul ca plătit cash
+      // după ce pornim polling
+      showToast('Plată cash inițiată. Așteptăm confirmarea agentului…', 'info', 0);
+
+      // marcăm nevoie de refresh la seat-map (se va actualiza din DB)
       try {
-        setSeats((prev) => {
-          if (!Array.isArray(prev)) return prev;
-          return prev.map(seat => {
-            if (!seat || seat.id !== popupSeat?.id) return seat;
-            const passengers = Array.isArray(seat.passengers) ? seat.passengers.map(p => {
-              if (p?.reservation_id === popupPassenger.reservation_id) {
-                return { ...p, payment_method: 'cash', payment_status: 'paid' };
-              }
-              return p;
-            }) : seat.passengers;
-            return { ...seat, passengers };
-          });
-        });
-      } catch { }
-
-
-      setToastMessage('Plată cash înregistrată.');
-      setToastType('success');
-      // marcăm nevoie de refresh: resetăm cheia fetch ca să permită reîncărcarea la următoarea acțiune
-      try { lastSeatsFetchKeyRef.current = null; } catch { }
+        lastSeatsFetchKeyRef.current = null;
+      } catch {
+        // ignorăm
+      }
     } catch (e) {
-      console.error('[handlePayReservation]', e);
-      setToastMessage(e.message || 'Eroare la plată');
-      setToastType('error');
+      console.error('[handlePayReservation] eroare generală:', e);
+      // în catch general
+      showToast(e.message || 'Eroare la plată', 'error', 6000);
     } finally {
       setPaying(false);
-      // închide popupurile
+      // închidem popupurile
       setPopupPassenger(null);
       setPopupSeat(null);
       setPopupPosition(null);
@@ -4064,10 +4228,73 @@ const handleSeatTextColorChange = (value) => {
     popupPassenger?.reservation_id,
     popupPassenger?.board_at,
     popupPassenger?.exit_at,
-    popupSeat?.id,
     receiptNote,
+    user?.id,
     performCashReceipt,
+    startPaymentStatusPolling,
   ]);
+
+
+    // [NEW] Achitare rapidă (card) a rezervării din popup – via AGENT
+  const handlePayReservationCard = useCallback(async () => {
+    try {
+      if (!popupPassenger?.reservation_id) return;
+
+      setPaying(true);
+
+      // verificăm dacă nu e deja plătită
+      const res = await fetch(`/api/reservations/${popupPassenger.reservation_id}/summary`);
+      const sum = await res.json();
+      if (sum?.paid) {
+        showToast('Rezervarea este deja achitată.', 'info', 4000);
+        setPaying(false);
+        return;
+      }
+
+      // trimitem plata la AGENT
+      try {
+        await performCardPayment({
+          reservationId: popupPassenger.reservation_id,
+          employeeId: user?.id,
+        });
+      } catch (err) {
+        console.error('[handlePayReservationCard] performCardPayment error:', err);
+        const baseMsg = String(err?.message || 'Eroare la plata cu cardul (agent)');
+        const detail = err?.payload?.error || err?.payload?.message || '';
+        const finalMsg = detail ? `${baseMsg}\n${detail}` : baseMsg;
+        showToast(finalMsg, 'error', 8000);
+        setPaying(false);
+        return;
+      }
+
+      // pornim polling pe statusul plății în DB
+      startPaymentStatusPolling(popupPassenger.reservation_id);
+      showToast('Plată cu cardul inițiată (agent)…', 'info', 0);
+
+      // marcăm nevoie de refresh la seat-map (se va actualiza din DB)
+      try {
+        lastSeatsFetchKeyRef.current = null;
+      } catch {
+        // ignorăm
+      }
+    } catch (e) {
+      console.error('[handlePayReservationCard] eroare generală:', e);
+      showToast(e.message || 'Eroare generală la plata cu cardul', 'error', 8000);
+    } finally {
+      setPaying(false);
+      // închidem popupurile
+      setPopupPassenger(null);
+      setPopupSeat(null);
+      setPopupPosition(null);
+    }
+  }, [
+    popupPassenger?.reservation_id,
+    user?.id,
+    performCardPayment,
+    startPaymentStatusPolling,
+  ]);
+
+
 
 
   const handleDeletePassenger = async (passenger) => {
@@ -5117,23 +5344,7 @@ const handleSeatTextColorChange = (value) => {
                         </label>
                       </div>
 
-                      {passengersData[seat.id]?.payment_method === 'card' && (
-                        <input
-                          type="text"
-                          placeholder="ID tranzacție POS"
-                          className="mt-2 p-1 border rounded w-full text-sm"
-                          value={passengersData[seat.id]?.transaction_id || ''}
-                          onChange={(e) =>
-                            setPassengersData((prev) => ({
-                              ...prev,
-                              [seat.id]: {
-                                ...prev[seat.id],
-                                transaction_id: e.target.value,
-                              },
-                            }))
-                          }
-                        />
-                      )}
+
                     </div>
 
 
@@ -5362,8 +5573,7 @@ const handleSeatTextColorChange = (value) => {
           tripId={tripId}
 
           // toast-uri
-          setToastMessage={setToastMessage}
-          setToastType={setToastType}
+          showToast={showToast}
           stops={routeStations.map(s => s.name)}
 
           // acțiuni standard
@@ -5376,7 +5586,8 @@ const handleSeatTextColorChange = (value) => {
           }}
 
 
-          onPay={handlePayReservation}
+          onPayCash={handlePayReservation}
+          onPayCard={handlePayReservationCard}
 
 
           onEdit={() => {
@@ -5424,9 +5635,10 @@ const handleSeatTextColorChange = (value) => {
 
 
 
-      {toastMessage && (
-        <Toast message={toastMessage} type={toastType} />
-      )}
+
+
+
+
 
       {multiPassengerOptions && (
         <MultiPassengerPopup
