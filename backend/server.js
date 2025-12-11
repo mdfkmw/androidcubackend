@@ -27,6 +27,9 @@ const cookieParser = require('cookie-parser');
 
 // Creează instanța aplicației Express
 const app = express();
+// ✅ HEARTBEAT global seats (fallback dacă serverul pornește și nimeni nu a cerut seats)
+global.__lastSeatActivityAt = Date.now();
+
 
 // Conectează la baza de date – fișierul db.js conține configurarea MariaDB (mysql2/promise)
 const pool = require('./db');
@@ -141,6 +144,90 @@ app.use('/api/auth', authRoutes);
 app.use('/api/public/auth', publicAuthRoutes);
 app.use('/api/invitations', invitationsRoutes);
 app.use('/api/seats', seatsRoutes);
+app.use('/api', require('./routes/agentJobs'));
+
+
+// ======================================================
+// AGENT LOCAL – polling endpoint (acceptă GET și POST)
+// ======================================================
+async function agentPollHandler(req, res) {
+  try {
+    const now = Date.now();
+
+    const lastSeat = global.__lastSeatActivityAt || 0;
+    const secondsSinceSeat = Math.floor((now - lastSeat) / 1000);
+    const seatActive = secondsSinceSeat <= 5;
+
+    // ✅ interval recomandat pentru agent
+    let recommendedPollIntervalMs = 5000; // default mai rar
+    if (seatActive) {
+      recommendedPollIntervalMs = 2000;
+    }
+
+    // 🔎 Căutăm un job "queued" în agent_jobs
+    let job = null;
+
+    const { rows } = await pool.query(
+      `SELECT id, job_type, payload
+         FROM agent_jobs
+        WHERE status = 'queued'
+        ORDER BY id ASC
+        LIMIT 1`
+    );
+
+    if (rows && rows.length) {
+      const row = rows[0];
+
+      let parsedPayload = null;
+      try {
+        parsedPayload = row.payload ? JSON.parse(row.payload) : null;
+      } catch (e) {
+        console.error('[agent/poll] Nu pot parsa payload JSON pentru job', row.id, e);
+      }
+
+      // 🔒 Marcăm jobul ca "in_progress" și creștem attempt_count
+      await pool.query(
+        `UPDATE agent_jobs
+            SET status = 'in_progress',
+                attempt_count = attempt_count + 1,
+                last_attempt_at = NOW()
+          WHERE id = ? AND status = 'queued'`,
+        [row.id]
+      );
+
+      job = {
+        id: row.id,
+        job_type: row.job_type,
+        payload: parsedPayload,
+      };
+    }
+
+    return res.json({
+      ok: true,
+      job,
+      system: {
+        seat_activity: {
+          last_seen_seconds: secondsSinceSeat,
+          active: seatActive,
+        },
+        recommended_poll_interval_ms: recommendedPollIntervalMs,
+      },
+    });
+  } catch (err) {
+    console.error('[agent/poll] Eroare:', err);
+    return res.status(500).json({ error: 'Eroare internă agent poll' });
+  }
+}
+
+app.get('/api/agent/poll', agentPollHandler);
+app.post('/api/agent/poll', agentPollHandler);
+
+
+app.get('/api/agent/poll', agentPollHandler);
+app.post('/api/agent/poll', agentPollHandler);
+
+
+
 app.use('/api/reservations', reservationsRoutes);
 app.use('/api/intents', intentsRoutes);
 app.use('/api/routes', routesApi);

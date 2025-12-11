@@ -16,6 +16,8 @@ const router = express.Router();
 
 const db = require('../../db');
 const { requireAuth, requireRole } = require('../../middleware/auth');
+const { resolveDefaultVehicleId } = require('../../utils/scheduleDefaults');
+
 
 /**
  * Copiat/adaptat din routes/reservations.js
@@ -104,6 +106,93 @@ function toNumberOrNull(value) {
 }
 
 /**
+ * Găsește sau creează un trip pe baza cheii naturale:
+ *   - route_schedule_id
+ *   - service_date (YYYY-MM-DD)
+ *
+ * Folosește route_schedules ca să deriveze route_id, ora și operatorul.
+ */
+async function findOrCreateTripForMobile({ routeScheduleId, serviceDate }) {
+  if (!routeScheduleId || !serviceDate) {
+    throw new Error('Parametri insuficienți pentru cheie naturală (route_schedule_id / service_date).');
+  }
+
+  // 1️⃣ luăm route_schedules
+  const rsSql = `
+    SELECT
+      rs.id,
+      rs.route_id,
+      rs.departure,
+      rs.operator_id
+    FROM route_schedules rs
+    WHERE rs.id = ?
+    LIMIT 1
+  `;
+  const rsRes = await db.query(rsSql, [routeScheduleId]);
+  if (!rsRes.rows || rsRes.rows.length === 0) {
+    throw new Error('route_schedule inexistent pentru id=' + routeScheduleId);
+  }
+
+  const rs = rsRes.rows[0];
+  const routeId = Number(rs.route_id);
+  const operatorId = Number(rs.operator_id) || null;
+
+  // ora de plecare din orar (HH:MM)
+  let time5 = null;
+  if (rs.departure) {
+    const str = String(rs.departure);
+    time5 = str.substring(0, 5);
+  }
+
+  // 2️⃣ verificăm dacă există deja trip pentru (route_schedule_id, route_id, date)
+  const findSql = `
+    SELECT id
+    FROM trips
+    WHERE route_schedule_id = ?
+      AND route_id = ?
+      AND date = ?
+    LIMIT 1
+  `;
+  const findRes = await db.query(findSql, [routeScheduleId, routeId, serviceDate]);
+  if (findRes.rows && findRes.rows.length > 0) {
+    return Number(findRes.rows[0].id);
+  }
+
+  // 3️⃣ dacă nu există, luăm vehiculul default (dacă e configurat)
+  let defaultVehicleId = null;
+  try {
+    defaultVehicleId = await resolveDefaultVehicleId(routeScheduleId, operatorId);
+  } catch (e) {
+    console.warn('[findOrCreateTripForMobile] nu s-a putut determina vehiculul default:', e.message);
+  }
+
+  // 4️⃣ creăm trip
+  const insertTripSql = `
+    INSERT INTO trips (route_schedule_id, route_id, date, time)
+    VALUES (?, ?, ?, ${time5 ? 'TIME(?)' : 'NULL'})
+  `;
+  const tripParams = time5
+    ? [routeScheduleId, routeId, serviceDate, time5]
+    : [routeScheduleId, routeId, serviceDate];
+
+  const insertRes = await db.query(insertTripSql, tripParams);
+  const newTripId = insertRes.insertId;
+
+  // 5️⃣ atașăm vehiculul default (dacă există)
+  if (defaultVehicleId) {
+    const tvSql = `
+      INSERT INTO trip_vehicles (trip_id, vehicle_id, is_primary)
+      VALUES (?, ?, 1)
+      ON DUPLICATE KEY UPDATE is_primary = VALUES(is_primary)
+    `;
+    await db.query(tvSql, [newTripId, defaultVehicleId]);
+  }
+
+  return newTripId;
+}
+
+
+/**
  * POST /api/mobile/tickets/batch
  *
  * Body:
@@ -159,15 +248,17 @@ router.post(
         error: 'Lipsesc biletele în payload (tickets[]).',
       });
     }
-
     const currentUserId = Number(req.user?.id) || null;
     const results = [];
+
+    // cache per-request: pentru aceeași cheie naturală nu mai facem query de fiecare dată
+    const tripCache = new Map(); // key: `${routeScheduleId}|${serviceDate}` -> tripId
 
     for (const t of tickets) {
       const localId = t.local_id ?? null;
 
       try {
-        const tripId = toIntOrNull(t.trip_id);
+        let tripId = toIntOrNull(t.trip_id);
         const seatId = toIntOrNull(t.seat_id);
 
         const boardStationId = toIntOrNull(
@@ -177,15 +268,32 @@ router.post(
           t.to_station_id ?? t.exit_station_id
         );
 
-        const priceListId = toIntOrNull(t.price_list_id);
-        const pricingCategoryId = toIntOrNull(t.pricing_category_id);
-        const discountTypeId = toIntOrNull(t.discount_type_id);
+        // 🔵 citim și cheia naturală trimisă de aplicația de șofer
+        const routeScheduleId = toIntOrNull(t.route_schedule_id);
+        const routeId = toIntOrNull(t.route_id);
+        const direction = t.direction ? String(t.direction) : null;
+        const serviceDate = t.service_date || null; // "YYYY-MM-DD"
 
-        const basePrice = toNumberOrNull(t.base_price);
-        const finalPriceRaw = toNumberOrNull(t.final_price);
-        const currency = t.currency || 'RON';
-        const paymentMethod = (t.payment_method || 'cash').toLowerCase();
-        const createdAt = t.created_at || null;
+        // Dacă nu avem trip_id, încercăm să-l rezolvăm din cheie naturală
+        if (!tripId && routeScheduleId && serviceDate) {
+          const cacheKey = `${routeScheduleId}|${serviceDate}`;
+          if (tripCache.has(cacheKey)) {
+            tripId = tripCache.get(cacheKey);
+          } else {
+            try {
+              const resolvedTripId = await findOrCreateTripForMobile({
+                routeScheduleId,
+                serviceDate,
+                // routeId și direction le-am citit, dar momentan nu avem nevoie de ele aici,
+                // sunt implicite în route_schedules
+              });
+              tripId = resolvedTripId;
+              tripCache.set(cacheKey, resolvedTripId);
+            } catch (e) {
+              console.error('[tickets/batch] nu pot rezolva trip din cheie naturală:', e);
+            }
+          }
+        }
 
         if (!tripId) {
           results.push({
@@ -193,10 +301,11 @@ router.post(
             ok: false,
             reservation_id: null,
             payment_id: null,
-            error: 'trip_id lipsă sau invalid',
+            error: 'trip_id lipsă sau invalid și nu am putut crea cursa din cheie naturală.',
           });
           continue;
         }
+
 
         // Pentru biletele cu loc, avem nevoie și de segment complet.
         if (seatId && (!boardStationId || !exitStationId)) {

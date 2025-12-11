@@ -1146,6 +1146,93 @@ router.get('/:id/summary', async (req, res) => {
   }
 });
 
+
+// ---------------------- CARD INTENT (no DB write) ----------------------
+const POS_BASE_URL = process.env.POS_BASE_URL || 'http://127.0.0.1:9100';
+
+router.post('/:id/payments/card-intent', async (req, res) => {
+  try {
+    const reservationId = Number(req.params.id);
+    if (!reservationId) {
+      return res.status(400).json({ error: 'reservationId invalid' });
+    }
+
+    const employeeId = Number(req.body?.employeeId || req.user?.id || 0) || null;
+
+    // 1) suma rămasă = price_value - SUM(paid)
+    const pricingRes = await db.query(
+      `SELECT price_value FROM reservation_pricing WHERE reservation_id = ? LIMIT 1`,
+      [reservationId]
+    );
+    const pricingRows = Array.isArray(pricingRes)
+      ? (Array.isArray(pricingRes[0]) ? pricingRes[0] : pricingRes)
+      : pricingRes?.rows;
+    const price_value = Number(pricingRows?.[0]?.price_value || 0);
+
+    const paidRes = await db.query(
+      `SELECT IFNULL(SUM(CASE WHEN status='paid' THEN amount ELSE 0 END),0) AS paid_amount
+         FROM payments WHERE reservation_id = ?`,
+      [reservationId]
+    );
+    const paidRows = Array.isArray(paidRes)
+      ? (Array.isArray(paidRes[0]) ? paidRes[0] : paidRes)
+      : paidRes?.rows;
+    const alreadyPaid = Number(paidRows?.[0]?.paid_amount || 0);
+
+    const amount = +(price_value - alreadyPaid).toFixed(2);
+    if (!(amount > 0)) {
+      return res.status(409).json({ error: 'Rezervare deja achitată' });
+    }
+
+    // 2) operatorul din cursă (rezervare -> trip -> route_schedule -> operator_id)
+    const opRow = await db.query(
+      `SELECT rs.operator_id
+         FROM reservations r
+         JOIN trips t ON t.id = r.trip_id
+         JOIN route_schedules rs ON rs.id = t.route_schedule_id
+        WHERE r.id = ?
+        LIMIT 1`,
+      [reservationId]
+    );
+    const opId = Number(
+      (Array.isArray(opRow) ? (Array.isArray(opRow[0]) ? opRow[0] : opRow) : opRow?.rows)?.[0]?.operator_id || 0
+    );
+    if (!opId) {
+      return res.status(409).json({ error: 'Nu am putut determina operatorul cursei' });
+    }
+
+    const dev = devForOperatorId(opId); // 'A' | 'B'
+    const base = POS_BASE_URL;
+    const priceStr = toMoneyDot(amount, 2); // "12.34"
+
+    // Aici DEFINIM protocolul cu serverul POS.
+    // Tu vei face un server gen "server-multi-device.js" pentru POS,
+    // care va expune /pos/sale?dev=A și primește { amount: "12.34", currency: "RON" }.
+    return res.json({
+      ok: true,
+      status: 'pending',
+      reservationId,
+      amount,
+      dev,
+      employeeId,
+      pos: {
+        sale: {
+          url: `${base}/pos/sale?dev=${dev}`,
+          body: {
+            amount: priceStr,
+            currency: 'RON',
+            description: `Rezervare #${reservationId}`,
+          },
+        },
+      },
+    });
+  } catch (err) {
+    console.error('[POST /api/reservations/:id/payments/card-intent]', err);
+    return res.status(500).json({ error: 'Eroare la generarea intent-ului pentru card' });
+  }
+});
+
+
 // ---------------------- CASH INTENT (no DB write) ----------------------
 router.post('/:id/payments/cash-intent', async (req, res) => {
   try {
@@ -1219,31 +1306,342 @@ router.post('/:id/payments/cash-intent', async (req, res) => {
 });
 
 
+// ---------------------- CASH VIA AGENT (payments + agent_jobs) ----------------------
+router.post('/:id/payments/cash-agent', async (req, res) => {
+  try {
+    const reservationId = Number(req.params.id);
+    if (!reservationId) {
+      return res.status(400).json({ error: 'reservationId invalid' });
+    }
+
+    const employeeId = Number(req.body?.employeeId || req.user?.id || 0) || null;
+
+    // 1) suma rămasă = price_value - SUM(paid)
+    const pricingRes = await db.query(
+      `SELECT price_value FROM reservation_pricing WHERE reservation_id = ? LIMIT 1`,
+      [reservationId]
+    );
+    const pricingRows = Array.isArray(pricingRes)
+      ? (Array.isArray(pricingRes[0]) ? pricingRes[0] : pricingRes)
+      : pricingRes?.rows;
+    const price_value = Number(pricingRows?.[0]?.price_value || 0);
+
+    const paidRes = await db.query(
+      `SELECT IFNULL(SUM(CASE WHEN status='paid' THEN amount ELSE 0 END),0) AS paid_amount
+         FROM payments WHERE reservation_id = ?`,
+      [reservationId]
+    );
+    const paidRows = Array.isArray(paidRes)
+      ? (Array.isArray(paidRes[0]) ? paidRes[0] : paidRes)
+      : paidRes?.rows;
+    const alreadyPaid = Number(paidRows?.[0]?.paid_amount || 0);
+
+    const amount = +(price_value - alreadyPaid).toFixed(2);
+    if (!(amount > 0)) {
+      return res.status(409).json({ error: 'Rezervare deja achitată' });
+    }
+
+    const desc = (req.body?.description || `Rezervare #${reservationId}`).toString();
+
+    // 2) INSERT în payments: pending, cash, fără bon deocamdată
+    const payIns = await db.query(
+      `INSERT INTO payments
+         (reservation_id, amount, status, payment_method, transaction_id, timestamp, collected_by, receipt_status)
+       VALUES (?, ?, 'pending', 'cash', NULL, NOW(), ?, 'none')`,
+      [reservationId, amount, employeeId]
+    );
+    const paymentId = payIns.insertId;
+
+    // 3) INSERT în agent_jobs: job pentru bon cash
+    const payload = {
+      reservation_id: reservationId,
+      payment_id: paymentId,
+      amount,
+      currency: 'RON',
+      description: desc,
+    };
+
+    const jobIns = await db.query(
+      `INSERT INTO agent_jobs
+         (reservation_id, payment_id, job_type, status, payload)
+       VALUES (?, ?, 'cash_receipt_only', 'queued', ?)`,
+      [reservationId, paymentId, JSON.stringify(payload)]
+    );
+    const jobId = jobIns.insertId;
+
+    // (opțional) log în audit, dacă vrei
+    // await logEvent(reservationId, 'pay_request', employeeId, { method: 'cash', amount });
+
+    return res.json({
+      ok: true,
+      reservationId,
+      amount,
+      status: 'pending',
+      payment_id: paymentId,
+      job_id: jobId,
+    });
+  } catch (err) {
+    console.error('[POST /api/reservations/:id/payments/cash-agent]', err);
+    return res.status(500).json({ error: 'Eroare inițiere plată cash (agent)' });
+  }
+});
+
+
+// ---------------------- CARD VIA AGENT (POS + fiscal, payments + agent_jobs) ----------------------
+router.post('/:id/payments/card-agent', async (req, res) => {
+  try {
+    const reservationId = Number(req.params.id);
+    if (!reservationId) {
+      return res.status(400).json({ error: 'reservationId invalid' });
+    }
+
+    const employeeId = Number(req.body?.employeeId || req.user?.id || 0) || null;
+
+    // 1) suma rămasă = price_value - SUM(paid)
+    const pricingRes = await db.query(
+      `SELECT price_value FROM reservation_pricing WHERE reservation_id = ? LIMIT 1`,
+      [reservationId]
+    );
+    const pricingRows = Array.isArray(pricingRes)
+      ? (Array.isArray(pricingRes[0]) ? pricingRes[0] : pricingRes)
+      : pricingRes?.rows;
+    const price_value = Number(pricingRows?.[0]?.price_value || 0);
+
+    const paidRes = await db.query(
+      `SELECT IFNULL(SUM(CASE WHEN status='paid' THEN amount ELSE 0 END),0) AS paid_amount
+         FROM payments WHERE reservation_id = ?`,
+      [reservationId]
+    );
+    const paidRows = Array.isArray(paidRes)
+      ? (Array.isArray(paidRes[0]) ? paidRes[0] : paidRes)
+      : paidRes?.rows;
+    const alreadyPaid = Number(paidRows?.[0]?.paid_amount || 0);
+
+    const amount = +(price_value - alreadyPaid).toFixed(2);
+    if (!(amount > 0)) {
+      return res.status(409).json({ error: 'Rezervare deja achitată' });
+    }
+
+    // 2) operatorul din cursă (rezervare -> trip -> route_schedule -> operator_id)
+    const opRow = await db.query(
+      `SELECT rs.operator_id
+         FROM reservations r
+         JOIN trips t ON t.id = r.trip_id
+         JOIN route_schedules rs ON rs.id = t.route_schedule_id
+        WHERE r.id = ?
+        LIMIT 1`,
+      [reservationId]
+    );
+    const opId = Number(
+      (Array.isArray(opRow) ? (Array.isArray(opRow[0]) ? opRow[0] : opRow) : opRow?.rows)?.[0]?.operator_id || 0
+    );
+    if (!opId) {
+      return res.status(409).json({ error: 'Nu am putut determina operatorul cursei' });
+    }
+
+    const dev = devForOperatorId(opId); // 'A' | 'B'
+    const desc = (req.body?.description || `Rezervare #${reservationId}`).toString();
+
+    // 3) INSERT în payments: pending, card, fără bon deocamdată
+    const payIns = await db.query(
+      `INSERT INTO payments
+         (reservation_id, amount, status, payment_method, transaction_id, timestamp, collected_by, receipt_status)
+       VALUES (?, ?, 'pending', 'card', NULL, NOW(), ?, 'none')`,
+      [reservationId, amount, employeeId]
+    );
+    const paymentId = payIns.insertId;
+
+    // 4) INSERT în agent_jobs: job pentru POS + bon fiscal
+    const payload = {
+      reservation_id: reservationId,
+      payment_id: paymentId,
+      amount,
+      currency: 'RON',
+      description: desc,
+      dev,
+    };
+
+    const jobIns = await db.query(
+      `INSERT INTO agent_jobs
+         (reservation_id, payment_id, job_type, status, payload)
+       VALUES (?, ?, 'card_and_receipt', 'queued', ?)`,
+      [reservationId, paymentId, JSON.stringify(payload)]
+    );
+    const jobId = jobIns.insertId;
+
+    return res.json({
+      ok: true,
+      reservationId,
+      amount,
+      status: 'pending',
+      payment_id: paymentId,
+      job_id: jobId,
+    });
+  } catch (err) {
+    console.error('[POST /api/reservations/:id/payments/card-agent]', err);
+
+    const msgDetaliu = err && err.message ? ` (${err.message})` : '';
+    return res.status(500).json({
+      error: `Eroare inițiere plată card (agent)${msgDetaliu}`,
+    });
+  }
+});
+
+;
 
 
 
-/* ---------------------- CASH CONFIRM (writes DB) ---------------------- */
+
+// ---------------------- RETRY BON FISCAL (manual, din agenție) ----------------------
+// ---------------------- RETRY BON FISCAL (manual, din agenție) ----------------------
+router.post('/:id/payments/:paymentId/retry-receipt', async (req, res) => {
+  try {
+    const reservationId = Number(req.params.id);
+    const paymentId = Number(req.params.paymentId);
+
+    if (!reservationId || !paymentId) {
+      return res.status(400).json({ error: 'ID rezervare sau plată invalid' });
+    }
+
+    // 1) Luăm plata + operatorul cursei
+    const payRes = await db.query(
+      `SELECT 
+         p.*,
+         r.trip_id,
+         rs.operator_id
+       FROM payments p
+       JOIN reservations r ON r.id = p.reservation_id
+       JOIN trips t ON t.id = r.trip_id
+       JOIN route_schedules rs ON rs.id = t.route_schedule_id
+       WHERE p.id = ? AND p.reservation_id = ?
+       LIMIT 1`,
+      [paymentId, reservationId]
+    );
+
+    const payRows = Array.isArray(payRes)
+      ? (Array.isArray(payRes[0]) ? payRes[0] : payRes)
+      : payRes?.rows;
+
+    const payment = payRows?.[0];
+
+    if (!payment) {
+      return res.status(404).json({ error: 'Plata nu a fost găsită pentru această rezervare' });
+    }
+
+    // 2) Verificăm că e într-o stare care permite retry
+    //    - POS a luat banii, bonul a eșuat
+    if (
+      payment.status !== 'pos_ok_waiting_receipt' &&
+      payment.status !== 'paid'
+    ) {
+      return res.status(409).json({
+        error:
+          'Plata nu este într-o stare potrivită pentru retry (trebuie să fie pos_ok_waiting_receipt sau paid)',
+      });
+    }
+
+    if (payment.receipt_status !== 'error_needs_retry') {
+      return res.status(409).json({
+        error: 'Bonul fiscal nu este marcat pentru retry (receipt_status trebuie să fie error_needs_retry)',
+      });
+    }
+
+    const operatorId = Number(payment.operator_id || 0);
+    if (!operatorId) {
+      return res.status(409).json({
+        error: 'Nu am putut determina operatorul pentru această plată',
+      });
+    }
+
+    // 3) Resetăm doar receipt_status -> none (NU mai atingem error_message)
+    await db.query(
+      `UPDATE payments
+         SET receipt_status = 'none'
+       WHERE id = ?`,
+      [paymentId]
+    );
+
+    // 4) Creăm un job nou retry_receipt pentru agent
+    const dev = devForOperatorId(operatorId); // A / B
+
+    const payload = {
+      reservation_id: payment.reservation_id,
+      payment_id: payment.id,
+      amount: payment.amount,
+      currency: 'RON',
+      description: `Rezervare #${payment.reservation_id}`,
+      dev,
+    };
+
+    const jobIns = await db.query(
+      `INSERT INTO agent_jobs
+         (reservation_id, payment_id, job_type, status, payload)
+       VALUES (?, ?, 'retry_receipt', 'queued', ?)`,
+      [payment.reservation_id, payment.id, JSON.stringify(payload)]
+    );
+
+    const jobId =
+      jobIns.insertId ||
+      (Array.isArray(jobIns) && jobIns[0] && jobIns[0].insertId) ||
+      null;
+
+    console.log(
+      '[retry-receipt] job nou creat',
+      { reservationId, paymentId, jobId }
+    );
+
+    return res.json({
+      ok: true,
+      reservationId,
+      paymentId,
+      job_id: jobId,
+    });
+  } catch (err) {
+    console.error(
+      '[POST /api/reservations/:id/payments/:paymentId/retry-receipt] EROARE:',
+      err
+    );
+    return res
+      .status(500)
+      .json({ error: 'Eroare inițiere retry bon fiscal' });
+  }
+});
+;
+
+
+/* ---------------------- CASH/CARD CONFIRM (writes DB) ---------------------- */
 /* POST /api/reservations/:id/payments/confirm */
 router.post('/:id/payments/confirm', async (req, res) => {
   try {
     const reservationId = Number(req.params.id);
     const employeeId = Number(req.body?.employeeId || req.user?.id || 0) || null;
     const amount = Number(req.body?.amount || 0);
+    const paymentMethod = (req.body?.payment_method === 'card') ? 'card' : 'cash';
+    const transactionId = (req.body?.transaction_id || null) || null;
+
     if (!reservationId || !(amount > 0)) {
       return res.status(400).json({ error: 'invalid data' });
     }
+
     await db.query(
       `INSERT INTO payments (reservation_id, amount, status, payment_method, transaction_id, timestamp, collected_by)
-       VALUES (?, ?, 'paid', 'cash', NULL, NOW(), ?)`,
-      [reservationId, amount, employeeId]
+       VALUES (?, ?, 'paid', ?, ?, NOW(), ?)`,
+      [reservationId, amount, paymentMethod, transactionId, employeeId]
     );
-    await logEvent(reservationId, 'pay', employeeId, { method: 'cash', amount });
+
+    await logEvent(reservationId, 'pay', employeeId, {
+      method: paymentMethod,
+      amount,
+      transactionId,
+    });
+
     return res.json({ ok: true, reservationId, status: 'paid' });
   } catch (err) {
     console.error('[POST /api/reservations/:id/payments/confirm]', err);
     return res.status(500).json({ error: 'confirm failed' });
   }
 });
+
 
 
 
@@ -1780,6 +2178,47 @@ router.post('/public_reservation', async (req, res) => {
   }
 });
 
+
+// GET /api/reservations/:id/payments/status
+router.get('/:id/payments/status', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) {
+      return res.status(400).json({ ok: false, error: 'id invalid' });
+    }
+
+    const { rows: payments } = await db.query(
+      `
+      SELECT
+        payments.id           AS payment_id,
+        payments.amount       AS amount,
+        payments.status       AS status,
+        payments.receipt_status AS receipt_status,
+        payments.payment_method,
+        payments.transaction_id,
+        DATE_FORMAT(payments.timestamp, '%d.%m.%Y %H:%i:%s') AS ts,
+        payments.collected_by
+      FROM payments
+      WHERE payments.reservation_id = ?
+      ORDER BY payments.id DESC
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    const p = (payments && payments[0]) || null;
+
+    return res.json({
+      ok: true,
+      payment: p,
+    });
+  } catch (err) {
+    console.error('[GET /api/reservations/:id/payments/status]', err);
+    return res.status(500).json({ ok: false, error: 'Eroare internă la status plăți' });
+  }
+});
+
+
 // GET /api/reservations/:id/details
 router.get('/:id/details', requireAuth, async (req, res) => {
   try {
@@ -1874,9 +2313,9 @@ ORDER BY payments.id DESC
       [id]
     );
 
-// 4) timeline (evenimente) din audit_logs
-const evRes = await db.query(
-  `
+    // 4) timeline (evenimente) din audit_logs
+    const evRes = await db.query(
+      `
   SELECT
     audit_logs.id                        AS event_id,
     DATE_FORMAT(audit_logs.created_at, '%d.%m.%Y %H:%i') AS at,
@@ -1898,8 +2337,8 @@ const evRes = await db.query(
     (audit_logs.entity = 'payment'     AND audit_logs.related_id = ?)
   ORDER BY audit_logs.created_at ASC, audit_logs.id ASC
   `,
-  [id, id]
-);
+      [id, id]
+    );
 
 
     res.json({
@@ -1913,6 +2352,83 @@ const evRes = await db.query(
     res.status(500).json({ error: 'Eroare la detalii rezervare' });
   }
 });
+
+
+
+// ⚠️ DEPRECATED – NU SE MAI FOLOSEȘTE
+// Înlocuit de POST /api/reservations/:id/payments/cash-agent
+// ======================================================
+// POST /api/reservations/:id/pay/cash-agent
+// Inițiază plată CASH + bon fiscal prin agent
+// ======================================================
+/* router.post('/:id/pay/cash-agent', async (req, res) => {
+  const reservationId = Number(req.params.id);
+
+  if (!Number.isFinite(reservationId)) {
+    return res.status(400).json({ error: 'reservation_id invalid' });
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // 🔎 Rezervare
+    const [[reservation]] = await conn.query(
+      'SELECT id, price FROM reservations WHERE id = ? LIMIT 1',
+      [reservationId]
+    );
+
+    if (!reservation) {
+      await conn.rollback();
+      return res.status(404).json({ error: 'Rezervare inexistentă' });
+    }
+
+    const amount = reservation.price;
+
+    // 1️⃣ Creăm payment
+    const [paymentRes] = await conn.query(
+      `INSERT INTO payments
+        (reservation_id, amount, payment_method, status)
+       VALUES (?, ?, 'cash', 'pending')`,
+      [reservationId, amount]
+    );
+
+    const paymentId = paymentRes.insertId;
+
+    // 2️⃣ Creăm agent_job
+    const payload = {
+      amount,
+      currency: 'RON',
+      reservation_id: reservationId,
+      payment_id: paymentId,
+    };
+
+    const [jobRes] = await conn.query(
+      `INSERT INTO agent_jobs
+        (reservation_id, payment_id, job_type, status, payload)
+       VALUES (?, ?, 'cash_receipt_only', 'queued', ?)`,
+      [
+        reservationId,
+        paymentId,
+        JSON.stringify(payload),
+      ]
+    );
+
+    await conn.commit();
+
+    return res.json({
+      ok: true,
+      payment_id: paymentId,
+      job_id: jobRes.insertId,
+    });
+  } catch (err) {
+    await conn.rollback();
+    console.error('[pay/cash-agent] eroare:', err);
+    return res.status(500).json({ error: 'Eroare inițiere plată cash' });
+  } finally {
+    conn.release();
+  }
+}); */
 
 
 

@@ -13,6 +13,10 @@ router.use(requireAuth, requireRole('admin', 'operator_admin', 'agent'));
 
 console.log('[ROUTER LOADED] routes/seats.js');
 
+// ✅ HEARTBEAT: marcăm ultima activitate seats (folosită de agent polling)
+global.__lastSeatActivityAt = Date.now();
+
+
 async function resolveDirection({ routeId, scheduleId, time, directionHint }) {
   if (!routeId) return 'tur';
   if (directionHint) return normalizeDirection(directionHint);
@@ -72,6 +76,8 @@ const parseStationId = value => {
 
 // ==================== GET /api/seats ====================
 router.get('/', async (req, res) => {
+    // ✅ heartbeat seats
+  global.__lastSeatActivityAt = Date.now();
   const { route_id, date } = req.query;
   let { time } = req.query;
   const scheduleId = req.query.route_schedule_id ? Number(req.query.route_schedule_id) : null;
@@ -281,6 +287,9 @@ router.get('/', async (req, res) => {
 
 // ==================== GET /api/seats/:vehicle_id ====================
 router.get('/:vehicle_id', async (req, res) => {
+    // ✅ heartbeat seats
+  global.__lastSeatActivityAt = Date.now();
+
   const { vehicle_id } = req.params;
   let { route_id, date, time } = req.query;
   const boardStationId = parseStationId(req.query.board_station_id);
