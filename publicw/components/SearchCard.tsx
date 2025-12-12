@@ -118,29 +118,20 @@ export default function SearchCard({ stations, relations, loading = false, onSea
       <div
         className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:grid-cols-[minmax(0,1.15fr)_auto_minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,1fr)]"
       >
-        <div className="relative">
+        <div>
           <label className="block text-xs uppercase tracking-wide text-white/60 mb-2">Plecare din</label>
           <select
             value={fromStation ?? ''}
             onChange={(e) => setFromStation(Number(e.target.value) || null)}
-            className="select pr-14 sm:pr-4"
+            className="select"
             disabled={loading || !stations.length}
           >
             {stations.map((st) => (
               <option key={st.id} value={st.id}>{st.name}</option>
             ))}
           </select>
-          <button
-            type="button"
-            onClick={handleSwapStations}
-            disabled={!fromStation || !toStation || loading}
-            className="absolute right-2 top-[38px] flex size-11 items-center justify-center rounded-2xl border border-white/15 bg-white/10 text-white text-lg transition hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed sm:hidden"
-            aria-label="Schimbă plecarea cu destinația"
-          >
-            ⇆
-          </button>
         </div>
-        <div className="hidden items-end justify-center sm:flex">
+        <div className="flex items-end justify-center">
           <button
             type="button"
             onClick={handleSwapStations}
