@@ -2832,6 +2832,7 @@ export default function ReservationPage({ userRole, user }) {
           const updated = data.find((r) => r.id === selectedRoute.id);
           if (updated) {
             // nu mai rescriem selectedRoute aici ca să nu declanșăm bucle
+            setSelectedRoute(updated);
             if (selectedScheduleId) {
               const refreshed = updated.schedules?.find(
                 (s) => (s.scheduleId ?? s.id) === selectedScheduleId

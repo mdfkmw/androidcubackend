@@ -437,6 +437,7 @@ export default function AdminEmployees() {
                 <option value="agent">Agent</option>
                 <option value="operator_admin">Operator admin</option>
                 <option value="admin">Admin</option>
+                <option value="dispecer">Altceva</option>
               </select>
             </label>
             <label className="block mb-2 text-sm flex items-center">
