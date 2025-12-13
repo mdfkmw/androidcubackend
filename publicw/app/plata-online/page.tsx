@@ -69,7 +69,7 @@ const termsSections = [
     points: [
       'Serviciile de transport sunt efectuate de SC PRIS COM UNIVERS SRL și SC AUTO DIMAS SRL.',
       'Platforma www.pris-com.ro este administrată tehnic de SC AUTO DIMAS SRL.',
-      'Suport rezervări: rezervari@pris-com.ro / 0740 470 996.',
+      'Suport rezervări: rezervari@pris-com.ro',
     ],
   },
   {
@@ -109,7 +109,7 @@ const termsSections = [
   {
     title: '7. Reclamații',
     points: [
-      'Reclamațiile se trimit în maximum 3 zile de la călătorie la rezervari@pris-com.ro sau 0740 470 996.',
+      'Reclamațiile se trimit în maximum 3 zile de la călătorie la rezervari@pris-com.ro.',
       'Termenul de răspuns este de maximum 30 de zile.',
     ],
   },
@@ -128,7 +128,7 @@ const privacySections = [
     title: '1. Operatorii datelor',
     points: [
       'SC PRIS COM UNIVERS SRL și SC AUTO DIMAS SRL procesează datele colectate prin www.pris-com.ro.',
-      'Contact date personale: rezervari@pris-com.ro | 0740 470 996.',
+      'Contact date personale: rezervari@pris-com.ro.',
     ],
   },
   {

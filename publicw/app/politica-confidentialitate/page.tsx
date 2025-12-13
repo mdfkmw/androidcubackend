@@ -81,10 +81,9 @@ export default function PrivacyPolicyPage() {
       <Navbar />
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-4 py-12">
         <header className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-          <p className="text-sm uppercase tracking-wide text-white/50">Document oficial</p>
           <h1 className="mt-2 text-3xl font-semibold md:text-4xl">Politica cookies/confidențialitate/reclamații</h1>
           <p className="mt-3 text-sm text-white/70">
-            Informațiile sunt preluate din documentul „Politica_confidentialitate_priscom.docx” și descriu modul în care Pris Com
+            Informațiile descriu modul în care Pris Com
             colectează, utilizează și protejează datele personale.
           </p>
         </header>
@@ -92,13 +91,9 @@ export default function PrivacyPolicyPage() {
         <section className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
           <h2 className="text-xl font-semibold">1. Operatorii datelor</h2>
           <p className="mt-3 text-sm text-white/70">
-            Datele sunt administrate de operatorii Pris Com enumerați mai jos. Pentru orice solicitare scrie-ne la{' '}
+            Datele sunt administrate de operatorii enumerați mai jos. Pentru orice solicitare scrie-ne la{' '}
             <a href="mailto:rezervari@pris-com.ro" className="text-white hover:text-brand">
               rezervari@pris-com.ro
-            </a>{' '}
-            sau sună la{' '}
-            <a href="tel:0740470996" className="text-white hover:text-brand">
-              0740 470 996
             </a>
             .
           </p>

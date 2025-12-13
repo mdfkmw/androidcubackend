@@ -45,14 +45,14 @@ const termsSections = [
   {
     title: '7. Reclamații',
     paragraphs: [
-      'Reclamațiile se trimit în maximum 3 zile de la călătorie la rezervari@pris-com.ro sau la 0740 470 996.',
+      'Reclamațiile se trimit în maximum 3 zile de la călătorie la rezervari@pris-com.ro.',
       'Termenul de răspuns este de cel mult 30 de zile.',
     ],
   },
   {
-    title: '8. Reduceri copii',
+    title: '8. Reduceri',
     paragraphs: [
-      'Reducerile sunt afișate în sistem și pot necesita prezentarea unui document justificativ la urcare.',
+      'Reducerile sunt afișate în sistem și necesită prezentarea documentelor justificative la urcare.',
     ],
   },
   {
